@@ -1,0 +1,6 @@
+.build
+tags
+*.swp
+*.exe
+*.log
+*.patch
