@@ -1,4 +1,4 @@
-// Generated from emoji-test.txt by 'premake5 embed'.
+// Generated from emoji-test.txt by 'premake5 tables'.
 
 static const struct interval emojis[] = {
 

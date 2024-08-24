@@ -4,8 +4,11 @@
 #include "wcwidth.h"
 
 static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
-static bool s_always_clear = true;
 static WCHAR s_placeholder = ' ';
+static bool s_always_clear = true;
+static bool s_skip_combining = false;
+static bool s_skip_color_emoji = false;
+static bool s_skip_eaa = false;
 
 class utf16fromutf32
 {
@@ -86,10 +89,25 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     }
     else
     {
-        printf("   0x%X, width %u, expected %u\n", (unsigned int)ucs, width, expected_width);
+        printf("%s   0x%X, width %u, expected %u", (s_placeholder == ' ') ? "" : " ", (unsigned int)ucs, width, expected_width);
+        const char* desc = is_assigned(ucs);
+        if (desc && *desc)
+            printf("    %s", desc);
+        puts("");
     }
 
     return ok;
+}
+
+static bool IsSkip(char32_t c)
+{
+    if (s_skip_combining && is_combining(c))
+        return true;
+    if (s_skip_color_emoji && is_color_emoji(c))
+        return true;
+    if (s_skip_eaa && is_east_asian_ambiguous(c))
+        return true;
+    return false;
 }
 
 struct interval
@@ -110,7 +128,6 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
     }
 
     const char32_t x = strtoul(arg, &end, radix);
-printf("PARSED 0x%X\n", (unsigned int)x);
     if (!x)
         return false;
 
@@ -182,6 +199,31 @@ first_arg:
                 g_color_emoji = false;
                 goto next_arg;
             }
+            else if (strcmp(argv[0], "--full-width") == 0)
+            {
+                g_full_width_available = true;
+                goto next_arg;
+            }
+            else if (strcmp(argv[0], "--no-full-width") == 0)
+            {
+                g_full_width_available = false;
+                goto next_arg;
+            }
+            else if (strcmp(argv[0], "--skip-combining") == 0)
+            {
+                s_skip_combining = true;
+                goto next_arg;
+            }
+            else if (strcmp(argv[0], "--skip-color-emoji") == 0)
+            {
+                s_skip_color_emoji = true;
+                goto next_arg;
+            }
+            else if (strcmp(argv[0], "--skip-eaa") == 0)
+            {
+                s_skip_eaa = true;
+                goto next_arg;
+            }
             else
             {
                 static const char usage[] =
@@ -192,6 +234,11 @@ first_arg:
                 "  --no-clear-failed     Leave failed codepoints on the screen.\n"
                 "  --color-emoji         Assume the terminal supports color emoji (default).\n"
                 "  --no-color-emoji      Assume the terminal does not support color emoji.\n"
+                "  --full-width          Assume Full Width characters are full width (default).\n"
+                "  --no-full-width       Assume Full Width characters are half width.\n"
+                "  --skip-combining      Skip testing combining marks.\n"
+                "  --skip-color-emoji    Skip testing color emoji.\n"
+                "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
                 "\n"
                 "  Each \"codepoint\" can be a single codepoint in decimal or hexadecimal (0x...),\n"
                 "  or a range such as \"0x300..0x31F\"."
@@ -235,18 +282,40 @@ first_arg:
     const interval* const ranges = manual_ranges.empty() ? c_ranges : &manual_ranges.front();
     const DWORD began = GetTickCount();
 
-    char32_t prev = 0;
-    char32_t first_failure = 0;
-    char32_t last_failure = 0;
-    bool any_failures = false;
+    unsigned int tested = 0;
+    unsigned int failed = 0;
 
     for (const interval* range = ranges; range->first; ++range)
     {
+        char32_t prev = 0;
+        char32_t first_failure = 0;
+        char32_t last_failure = 0;
+
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        GetConsoleScreenBufferInfo(s_hout, &csbi);
+        SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
+
+        if (range->first == range->last)
+            printf("CODEPOINT 0x%X", (unsigned int)range->first);
+        else
+            printf("RANGE 0x%X .. 0x%X", (unsigned int)range->first, (unsigned int)range->last);
+
+        SetConsoleTextAttribute(s_hout, csbi.wAttributes);
+        puts("");
+
         for (char32_t c = range->first; c <= range->last; ++c)
         {
-            if (!prev || prev >> 12 != c >> 12)
+            if (IsSkip(c))
+                continue;
+
+            if (!is_assigned(c))
+                continue;
+
+            if (!prev || (prev >> 12) != (c >> 12))
+            {
                 printf("0x%X ...\n", (unsigned int)c);
-            prev = c;
+                prev = c;
+            }
 
             const int verified = VerifyWidth(c, wcwidth(c));
             if (verified < 0)
@@ -257,7 +326,7 @@ first_arg:
 
             if (!verified)
             {
-                any_failures = true;
+                ++failed;
                 if (!first_failure)
                     first_failure = c;
                 last_failure = c;
@@ -271,6 +340,8 @@ first_arg:
                     last_failure = 0;
                 }
             }
+
+            ++tested;
         }
 
         if (first_failure)
@@ -282,7 +353,7 @@ first_arg:
     }
 
     const DWORD elapsed = GetTickCount() - began;
-    printf("\nElapsed time %u.%03u seconds.\n", elapsed / 1000, elapsed % 1000);
+    printf("\nTested %u characters in %u.%03u seconds; %u failed.\n", tested, elapsed / 1000, elapsed % 1000, failed);
 
-    return any_failures ? 1 : 0;
+    return !!failed;
 }
