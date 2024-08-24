@@ -38,6 +38,11 @@ local function escape_cpp(text)
 end
 
 --------------------------------------------------------------------------------
+local function to_symbol_cpp(text)
+    return text:gsub("[^A-Za-z0-9_]", "_")
+end
+
+--------------------------------------------------------------------------------
 local function load_indexed_emoji_table(file)
     -- Collect the emoji characters.
     --
@@ -169,6 +174,12 @@ local function do_assigned()
         "    const char* desc;",
         "};",
         "",
+        "struct codepoint_range {",
+        "    char32_t first;",
+        "    char32_t last;",
+        "    const char* desc;",
+        "};",
+        "",
     }
 
     for _,line in ipairs(header) do
@@ -180,22 +191,45 @@ local function do_assigned()
 
     local lineno = 0
     local assigned = 0
+    local area, first
+    local first_last_ranges = {}
     for line in data:lines() do
         lineno = lineno + 1
         local codepoint,description = line:match("^(%x+);([^;]*);")
         if not codepoint then
             error("Failed to parse code point in line "..tostring(lineno)..".")
         end
--- TODO: Some of the First..Last ranges should be treated as assigned codepoints (but e.g. not Surrogate Pair ranges).
-        if description:find("First>$") or description:find("Last>$") then
-            out:write(string.format("// 0x%s - %s\n", codepoint, description))
+        local first_tag = description:match("^<(.*), First>$")
+        if first_tag then
+            area = first_tag
+            first = tonumber(codepoint, 16)
+        elseif area then
+            if not description:find("Last>$") then
+                error("Unexpected First/Last range at "..tostring(lineno)..".")
+            end
+            if not area:find("Surrogate") then
+                local last = tonumber(codepoint, 16)
+                table.insert(first_last_ranges, {first,last,area})
+            end
+            area = nil
         else
             out:write(string.format("{0x%s,\"%s\"},\n", codepoint, escape_cpp(description)))
             assigned = assigned + 1
         end
     end
 
+    out:write("\n};\n\n")
+
+    for i,r in ipairs(first_last_ranges) do
+        out:write(string.format("static const codepoint_range c_%s = {0x%X,0x%X,\"%s\"};\n", to_symbol_cpp(r[3]), r[1], r[2], r[3]))
+    end
+
+    out:write("\nstatic const struct codepoint_range c_assigned_areas[] = {\n\n");
+    for i,r in ipairs(first_last_ranges) do
+        out:write(string.format("{0x%X,0x%X,\"%s\"}, // %s\n", r[1], r[2], escape_cpp(r[3]), r[3]))
+    end
     out:write("\n};\n")
+
     out:close()
 
     print("   " .. assigned .." assigned codepoints (not including various large First..Last ranges)")

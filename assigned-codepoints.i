@@ -5,6 +5,12 @@ struct codepoint {
     const char* desc;
 };
 
+struct codepoint_range {
+    char32_t first;
+    char32_t last;
+    const char* desc;
+};
+
 static const struct codepoint c_assigned[] = {
 
 {0x0000,"<control>"},
@@ -12246,8 +12252,6 @@ static const struct codepoint c_assigned[] = {
 {0x33FD,"IDEOGRAPHIC TELEGRAPH SYMBOL FOR DAY THIRTY"},
 {0x33FE,"IDEOGRAPHIC TELEGRAPH SYMBOL FOR DAY THIRTY-ONE"},
 {0x33FF,"SQUARE GAL"},
-// 0x3400 - <CJK Ideograph Extension A, First>
-// 0x4DBF - <CJK Ideograph Extension A, Last>
 {0x4DC0,"HEXAGRAM FOR THE CREATIVE HEAVEN"},
 {0x4DC1,"HEXAGRAM FOR THE RECEPTIVE EARTH"},
 {0x4DC2,"HEXAGRAM FOR DIFFICULTY AT THE BEGINNING"},
@@ -12312,8 +12316,6 @@ static const struct codepoint c_assigned[] = {
 {0x4DFD,"HEXAGRAM FOR SMALL PREPONDERANCE"},
 {0x4DFE,"HEXAGRAM FOR AFTER COMPLETION"},
 {0x4DFF,"HEXAGRAM FOR BEFORE COMPLETION"},
-// 0x4E00 - <CJK Ideograph, First>
-// 0x9FFF - <CJK Ideograph, Last>
 {0xA000,"YI SYLLABLE IT"},
 {0xA001,"YI SYLLABLE IX"},
 {0xA002,"YI SYLLABLE I"},
@@ -15190,8 +15192,6 @@ static const struct codepoint c_assigned[] = {
 {0xABF7,"MEETEI MAYEK DIGIT SEVEN"},
 {0xABF8,"MEETEI MAYEK DIGIT EIGHT"},
 {0xABF9,"MEETEI MAYEK DIGIT NINE"},
-// 0xAC00 - <Hangul Syllable, First>
-// 0xD7A3 - <Hangul Syllable, Last>
 {0xD7B0,"HANGUL JUNGSEONG O-YEO"},
 {0xD7B1,"HANGUL JUNGSEONG O-O-I"},
 {0xD7B2,"HANGUL JUNGSEONG YO-A"},
@@ -15264,14 +15264,6 @@ static const struct codepoint c_assigned[] = {
 {0xD7F9,"HANGUL JONGSEONG SSANGCIEUC"},
 {0xD7FA,"HANGUL JONGSEONG PHIEUPH-SIOS"},
 {0xD7FB,"HANGUL JONGSEONG PHIEUPH-THIEUTH"},
-// 0xD800 - <Non Private Use High Surrogate, First>
-// 0xDB7F - <Non Private Use High Surrogate, Last>
-// 0xDB80 - <Private Use High Surrogate, First>
-// 0xDBFF - <Private Use High Surrogate, Last>
-// 0xDC00 - <Low Surrogate, First>
-// 0xDFFF - <Low Surrogate, Last>
-// 0xE000 - <Private Use, First>
-// 0xF8FF - <Private Use, Last>
 {0xF900,"CJK COMPATIBILITY IDEOGRAPH-F900"},
 {0xF901,"CJK COMPATIBILITY IDEOGRAPH-F901"},
 {0xF902,"CJK COMPATIBILITY IDEOGRAPH-F902"},
@@ -25891,8 +25883,6 @@ static const struct codepoint c_assigned[] = {
 {0x16FE4,"KHITAN SMALL SCRIPT FILLER"},
 {0x16FF0,"VIETNAMESE ALTERNATE READING MARK CA"},
 {0x16FF1,"VIETNAMESE ALTERNATE READING MARK NHAY"},
-// 0x17000 - <Tangut Ideograph, First>
-// 0x187F7 - <Tangut Ideograph, Last>
 {0x18800,"TANGUT COMPONENT-001"},
 {0x18801,"TANGUT COMPONENT-002"},
 {0x18802,"TANGUT COMPONENT-003"},
@@ -27131,8 +27121,6 @@ static const struct codepoint c_assigned[] = {
 {0x18CD3,"KHITAN SMALL SCRIPT CHARACTER-18CD3"},
 {0x18CD4,"KHITAN SMALL SCRIPT CHARACTER-18CD4"},
 {0x18CD5,"KHITAN SMALL SCRIPT CHARACTER-18CD5"},
-// 0x18D00 - <Tangut Ideograph Supplement, First>
-// 0x18D08 - <Tangut Ideograph Supplement, Last>
 {0x1AFF0,"KATAKANA LETTER MINNAN TONE-2"},
 {0x1AFF1,"KATAKANA LETTER MINNAN TONE-3"},
 {0x1AFF2,"KATAKANA LETTER MINNAN TONE-4"},
@@ -34039,18 +34027,6 @@ static const struct codepoint c_assigned[] = {
 {0x1FBF7,"SEGMENTED DIGIT SEVEN"},
 {0x1FBF8,"SEGMENTED DIGIT EIGHT"},
 {0x1FBF9,"SEGMENTED DIGIT NINE"},
-// 0x20000 - <CJK Ideograph Extension B, First>
-// 0x2A6DF - <CJK Ideograph Extension B, Last>
-// 0x2A700 - <CJK Ideograph Extension C, First>
-// 0x2B739 - <CJK Ideograph Extension C, Last>
-// 0x2B740 - <CJK Ideograph Extension D, First>
-// 0x2B81D - <CJK Ideograph Extension D, Last>
-// 0x2B820 - <CJK Ideograph Extension E, First>
-// 0x2CEA1 - <CJK Ideograph Extension E, Last>
-// 0x2CEB0 - <CJK Ideograph Extension F, First>
-// 0x2EBE0 - <CJK Ideograph Extension F, Last>
-// 0x2EBF0 - <CJK Ideograph Extension I, First>
-// 0x2EE5D - <CJK Ideograph Extension I, Last>
 {0x2F800,"CJK COMPATIBILITY IDEOGRAPH-2F800"},
 {0x2F801,"CJK COMPATIBILITY IDEOGRAPH-2F801"},
 {0x2F802,"CJK COMPATIBILITY IDEOGRAPH-2F802"},
@@ -34593,10 +34569,6 @@ static const struct codepoint c_assigned[] = {
 {0x2FA1B,"CJK COMPATIBILITY IDEOGRAPH-2FA1B"},
 {0x2FA1C,"CJK COMPATIBILITY IDEOGRAPH-2FA1C"},
 {0x2FA1D,"CJK COMPATIBILITY IDEOGRAPH-2FA1D"},
-// 0x30000 - <CJK Ideograph Extension G, First>
-// 0x3134A - <CJK Ideograph Extension G, Last>
-// 0x31350 - <CJK Ideograph Extension H, First>
-// 0x323AF - <CJK Ideograph Extension H, Last>
 {0xE0001,"LANGUAGE TAG"},
 {0xE0020,"TAG SPACE"},
 {0xE0021,"TAG EXCLAMATION MARK"},
@@ -34934,9 +34906,43 @@ static const struct codepoint c_assigned[] = {
 {0xE01ED,"VARIATION SELECTOR-254"},
 {0xE01EE,"VARIATION SELECTOR-255"},
 {0xE01EF,"VARIATION SELECTOR-256"},
-// 0xF0000 - <Plane 15 Private Use, First>
-// 0xFFFFD - <Plane 15 Private Use, Last>
-// 0x100000 - <Plane 16 Private Use, First>
-// 0x10FFFD - <Plane 16 Private Use, Last>
+
+};
+
+static const codepoint_range c_CJK_Ideograph_Extension_A = {0x3400,0x4DBF,"CJK Ideograph Extension A"};
+static const codepoint_range c_CJK_Ideograph = {0x4E00,0x9FFF,"CJK Ideograph"};
+static const codepoint_range c_Hangul_Syllable = {0xAC00,0xD7A3,"Hangul Syllable"};
+static const codepoint_range c_Private_Use = {0xE000,0xF8FF,"Private Use"};
+static const codepoint_range c_Tangut_Ideograph = {0x17000,0x187F7,"Tangut Ideograph"};
+static const codepoint_range c_Tangut_Ideograph_Supplement = {0x18D00,0x18D08,"Tangut Ideograph Supplement"};
+static const codepoint_range c_CJK_Ideograph_Extension_B = {0x20000,0x2A6DF,"CJK Ideograph Extension B"};
+static const codepoint_range c_CJK_Ideograph_Extension_C = {0x2A700,0x2B739,"CJK Ideograph Extension C"};
+static const codepoint_range c_CJK_Ideograph_Extension_D = {0x2B740,0x2B81D,"CJK Ideograph Extension D"};
+static const codepoint_range c_CJK_Ideograph_Extension_E = {0x2B820,0x2CEA1,"CJK Ideograph Extension E"};
+static const codepoint_range c_CJK_Ideograph_Extension_F = {0x2CEB0,0x2EBE0,"CJK Ideograph Extension F"};
+static const codepoint_range c_CJK_Ideograph_Extension_I = {0x2EBF0,0x2EE5D,"CJK Ideograph Extension I"};
+static const codepoint_range c_CJK_Ideograph_Extension_G = {0x30000,0x3134A,"CJK Ideograph Extension G"};
+static const codepoint_range c_CJK_Ideograph_Extension_H = {0x31350,0x323AF,"CJK Ideograph Extension H"};
+static const codepoint_range c_Plane_15_Private_Use = {0xF0000,0xFFFFD,"Plane 15 Private Use"};
+static const codepoint_range c_Plane_16_Private_Use = {0x100000,0x10FFFD,"Plane 16 Private Use"};
+
+static const struct codepoint_range c_assigned_areas[] = {
+
+{0x3400,0x4DBF,"CJK Ideograph Extension A"}, // CJK Ideograph Extension A
+{0x4E00,0x9FFF,"CJK Ideograph"}, // CJK Ideograph
+{0xAC00,0xD7A3,"Hangul Syllable"}, // Hangul Syllable
+{0xE000,0xF8FF,"Private Use"}, // Private Use
+{0x17000,0x187F7,"Tangut Ideograph"}, // Tangut Ideograph
+{0x18D00,0x18D08,"Tangut Ideograph Supplement"}, // Tangut Ideograph Supplement
+{0x20000,0x2A6DF,"CJK Ideograph Extension B"}, // CJK Ideograph Extension B
+{0x2A700,0x2B739,"CJK Ideograph Extension C"}, // CJK Ideograph Extension C
+{0x2B740,0x2B81D,"CJK Ideograph Extension D"}, // CJK Ideograph Extension D
+{0x2B820,0x2CEA1,"CJK Ideograph Extension E"}, // CJK Ideograph Extension E
+{0x2CEB0,0x2EBE0,"CJK Ideograph Extension F"}, // CJK Ideograph Extension F
+{0x2EBF0,0x2EE5D,"CJK Ideograph Extension I"}, // CJK Ideograph Extension I
+{0x30000,0x3134A,"CJK Ideograph Extension G"}, // CJK Ideograph Extension G
+{0x31350,0x323AF,"CJK Ideograph Extension H"}, // CJK Ideograph Extension H
+{0xF0000,0xFFFFD,"Plane 15 Private Use"}, // Plane 15 Private Use
+{0x100000,0x10FFFD,"Plane 16 Private Use"}, // Plane 16 Private Use
 
 };

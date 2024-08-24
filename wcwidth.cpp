@@ -60,6 +60,7 @@
  */
 
 #include <stdlib.h>
+#include <windows.h>
 #include <wchar.h>
 
 #if defined(__cplusplus)
@@ -68,6 +69,7 @@ extern "C" {
 
 int g_full_width_available = 1;
 int g_color_emoji = 1;
+int g_only_ucs2 = 0;
 
 static int resolve_ambiguous_wcwidth(char32_t ucs)
 {
@@ -118,7 +120,26 @@ const char* is_assigned(char32_t ucs) {
       return table[mid].desc;
   }
 
+  const struct codepoint_range* atable = c_assigned_areas;
+  min = 0;
+  max = _countof(c_assigned_areas) - 1;
+
+  while (max >= min) {
+    mid = (min + max) / 2;
+    if (ucs > atable[mid].last)
+      min = mid + 1;
+    else if (ucs < atable[mid].first)
+      max = mid - 1;
+    else
+      return atable[mid].desc;
+  }
+
   return 0;
+}
+
+int is_ideograph(char32_t ucs) {
+  const char* name = is_assigned(ucs);
+  return name && strstr(name, "Ideograph");
 }
 
 /* sorted list of non-overlapping intervals of non-spacing characters */
@@ -228,6 +249,9 @@ static int mk_wcwidth(char32_t ucs)
   if (ucs < 0xa0)
     return -1;
 
+  if (g_only_ucs2 && ucs >= 0x10000)
+    return 2;
+
   /* special processing for color emoji */
   if (g_color_emoji &&
       bisearch(ucs, emojis, _countof(emojis) - 1))
@@ -334,6 +358,36 @@ static int mk_wcwidth_cjk(char32_t ucs)
     return resolve_ambiguous_wcwidth(ucs);
 
   return mk_wcwidth(ucs);
+}
+
+int is_CJK_codepage(UINT cp)
+{
+    return (cp == 932 || cp == 936 || cp == 949 || cp == 950);
+}
+
+int test_ambiguous_width_char(char32_t ucs, char32_t* peek, unsigned int peek_len)
+{
+    UINT cp = GetConsoleOutputCP();
+    if (is_CJK_codepage(cp))
+    {
+        if (bisearch(ucs, ambiguous, _countof(ambiguous) - 1))
+            return 1; // CJK ambiguous width char.
+    }
+
+    if (bisearch(ucs, emojis, _countof(emojis) - 1))
+        return 2; // Color emoji ambiguous width char.
+
+    if (bisearch(ucs, ambiguous_emojis, _countof(ambiguous_emojis) - 1))
+    {
+        if (peek && peek_len && *peek == 0xfe0f &&
+            bisearch(ucs, fully_qualified_double_width, _countof(fully_qualified_double_width) - 1))
+        {
+            return 4; // Color emoji ambiguous width char, fully qualified with 0xFE0F.
+        }
+        return 3; // Emoji whose width depends on surrounding characters.
+    }
+
+    return 0; // Char width is not known to be ambiguous (but still could be).
 }
 
 

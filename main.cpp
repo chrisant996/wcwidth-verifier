@@ -5,10 +5,11 @@
 
 static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
 static WCHAR s_placeholder = ' ';
-static bool s_always_clear = true;
-static bool s_skip_combining = false;
-static bool s_skip_color_emoji = false;
-static bool s_skip_eaa = false;
+static int s_always_clear = true;
+static int s_skip_combining = true;
+static int s_skip_color_emoji = true;
+static int s_skip_eaa = false;
+static int s_skip_ideographs = true;
 
 class utf16fromutf32
 {
@@ -107,6 +108,8 @@ static bool IsSkip(char32_t c)
         return true;
     if (s_skip_eaa && is_east_asian_ambiguous(c))
         return true;
+    if (s_skip_ideographs && is_ideograph(c))
+        return true;
     return false;
 }
 
@@ -146,6 +149,20 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
             return false;
     }
 
+    return true;
+}
+
+static bool handle_bool_option(const char* arg, const char* name, int* flag)
+{
+    if (arg[0] != '-' || arg[1] != '-')
+        return false;
+    arg += 2;
+    const bool no = (arg[0] == 'n' && arg[1] == 'o' && arg[2] == '-');
+    if (no)
+        arg += 3;
+    if (strcmp(arg, name) != 0)
+        return false;
+    *flag = !no;
     return true;
 }
 
@@ -189,39 +206,14 @@ first_arg:
                 s_always_clear = false;
                 goto next_arg;
             }
-            else if (strcmp(argv[0], "--color-emoji") == 0)
+            else if (handle_bool_option(argv[0], "color-emoji", &g_color_emoji) ||
+                     handle_bool_option(argv[0], "full-width", &g_full_width_available) ||
+                     handle_bool_option(argv[0], "only-ucs2", &g_only_ucs2) ||
+                     handle_bool_option(argv[0], "skip-combining", &s_skip_combining) ||
+                     handle_bool_option(argv[0], "skip-color-emoji", &s_skip_color_emoji) ||
+                     handle_bool_option(argv[0], "skip-eaa", &s_skip_eaa) ||
+                     handle_bool_option(argv[0], "skip-ideographs", &s_skip_ideographs))
             {
-                g_color_emoji = true;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--no-color-emoji") == 0)
-            {
-                g_color_emoji = false;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--full-width") == 0)
-            {
-                g_full_width_available = true;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--no-full-width") == 0)
-            {
-                g_full_width_available = false;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--skip-combining") == 0)
-            {
-                s_skip_combining = true;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--skip-color-emoji") == 0)
-            {
-                s_skip_color_emoji = true;
-                goto next_arg;
-            }
-            else if (strcmp(argv[0], "--skip-eaa") == 0)
-            {
-                s_skip_eaa = true;
                 goto next_arg;
             }
             else
@@ -236,6 +228,8 @@ first_arg:
                 "  --no-color-emoji      Assume the terminal does not support color emoji.\n"
                 "  --full-width          Assume Full Width characters are full width (default).\n"
                 "  --no-full-width       Assume Full Width characters are half width.\n"
+                "  --only-ucs2           Assume only UCS2 support.\n"
+                "  --no-only-ucs2        Assume Unicode Surrogate Pairs support (default).\n"
                 "  --skip-combining      Skip testing combining marks.\n"
                 "  --skip-color-emoji    Skip testing color emoji.\n"
                 "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
