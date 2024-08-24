@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdio.h>
+#include <vector>
 #include "wcwidth.h"
 
 static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -91,6 +92,46 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     return ok;
 }
 
+struct interval
+{
+    char32_t first;
+    char32_t last;
+};
+
+static bool ParseCodepoint(const char* arg, interval& range, bool end_range=false)
+{
+    char* end;
+    int radix = 10;
+
+    if (arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X'))
+    {
+        radix = 16;
+        arg += 2;
+    }
+
+    const char32_t x = strtoul(arg, &end, radix);
+printf("PARSED 0x%X\n", (unsigned int)x);
+    if (!x)
+        return false;
+
+    if (end_range)
+    {
+        range.last = x;
+        if (*end && *end != ' ')
+            return false;
+    }
+    else
+    {
+        range.first = range.last = x;
+        if (end[0] == '.' && end[1] == '.')
+            return ParseCodepoint(end + 2, range, true);
+        if (*end && *end != ' ')
+            return false;
+    }
+
+    return true;
+}
+
 int main(int argc, char** argv)
 {
     --argc, ++argv;
@@ -102,28 +143,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    struct interval
-    {
-        char32_t first;
-        char32_t last;
-    };
-
     static const interval c_ranges[] =
     {
         { 0x20, 0x7e },
         { 0xa0, 0xD7FF },
         { 0xE000, 0xFFFF },
         { 0x10000, 0x1FFFF },
-        // ...
         {}
     };
 
-    const interval* ranges = c_ranges;
-    interval manual_range[] =
-    {
-        {},
-        {}
-    };
+    std::vector<interval> manual_ranges;
 
     goto first_arg;
 next_arg:
@@ -156,54 +185,54 @@ first_arg:
             else
             {
                 static const char usage[] =
-                "Usage:  wcwv [flags] [codepoint]\n"
+                "Usage:  wcwv [flags] [codepoint [...]]\n"
                 "n"
-                "  --help                    Display this help.\n"
-                "  --always-clear            Always clear codepoints after printing them (default).\n"
-                "  --no-clear-failed         Leave failed codepoints on the screen.\n"
-                "  --color-emoji             Assume the terminal supports color emoji (default).\n"
-                "  --no-color-emoji          Assume the terminal does not support color emoji.\n"
+                "  --help                Display this help.\n"
+                "  --always-clear        Always clear codepoints after printing them (default).\n"
+                "  --no-clear-failed     Leave failed codepoints on the screen.\n"
+                "  --color-emoji         Assume the terminal supports color emoji (default).\n"
+                "  --no-color-emoji      Assume the terminal does not support color emoji.\n"
+                "\n"
+                "  Each \"codepoint\" can be a single codepoint in decimal or hexadecimal (0x...),\n"
+                "  or a range such as \"0x300..0x31F\"."
                 "\n"
                 "Examples:\n"
                 "\n"
-                "  wcwv                      Run the full tests.\n"
-                "  wcwv --no-clear-failed    Run the full tests, and leave failed codepoints\n"
-                "                            visible after failing.\n"
-                "  wcwv 0x300                Run the test only on codepoint 0x300.\n"
+                "  wcwv                          Run the full tests.\n"
+                "  wcwv --no-clear-failed        Run the full tests, and leave failed codepoints\n"
+                "                                visible after failing.\n"
+                "  wcwv 0x300                    Run the test on codepoint 0x300.\n"
+                "  wcwv 0x300 0x301              Run the test on codepoints 0x300 and 0x301.\n"
+                "  wcwv 0x300..0x3FF             Run the test on codepoints 0x300 through 0x3FF.\n"
+                "  wcwv 0x20..0x2F 0x40..0x5F    Run the test on codepoints 0x20 through 0x2F\n"
+                "                                and 0x40 through 0x5F.\n"
                 ;
                 printf("%s", usage);
                 return 0;
             }
         }
-        else if (argv[0][0] == '0' && (argv[0][1] == 'x' || argv[0][1] == 'X'))
-        {
-            char* end;
-            manual_range[0].first = manual_range[0].last = strtol(argv[0], &end, 16);
-            if (*end && *end != ' ')
-            {
-                fprintf(stderr, "Unable to parse hexadecimal code '%s'.\n", argv[0]);
-                return 1;
-            }
-            ranges = manual_range;
-        }
         else if (argv[0][0] >= '0' && argv[0][0] <= '9')
         {
-            char* end;
-            manual_range[0].first = manual_range[0].last = strtol(argv[0], &end, 10);
-            if (*end && *end != ' ')
+            interval interval;
+            if (!ParseCodepoint(argv[0], interval))
             {
-                fprintf(stderr, "Unable to parse decimal code '%s'.\n", argv[0]);
+                fprintf(stderr, "Unable to parse '%s' as a codepoint or range of codepoints.\n", argv[0]);
                 return 1;
             }
-            ranges = manual_range;
+            manual_ranges.emplace_back(interval);
+            goto next_arg;
         }
         else
         {
-            fprintf(stderr, "Unrecognized decimal or hexadecimal code '%s'.\n", argv[0]);
+            fprintf(stderr, "Unrecognized codepoint '%s'.\n", argv[0]);
             return 1;
         }
     }
 
+    if (!manual_ranges.empty())
+        manual_ranges.push_back({0, 0});
+
+    const interval* const ranges = manual_ranges.empty() ? c_ranges : &manual_ranges.front();
     const DWORD began = GetTickCount();
 
     char32_t prev = 0;
