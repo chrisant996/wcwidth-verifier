@@ -212,7 +212,7 @@ local function do_assigned()
                 table.insert(first_last_ranges, {first,last,area})
             end
             area = nil
-        else
+        elseif description ~= "<control>" then
             out:write(string.format("{0x%s,\"%s\"},\n", codepoint, escape_cpp(description)))
             assigned = assigned + 1
         end
@@ -236,11 +236,59 @@ local function do_assigned()
 end
 
 --------------------------------------------------------------------------------
+local function do_blocks()
+    local out = "unicode-blocks.i"
+
+    print("\n"..out)
+
+    local data = io.open("unicode/blocks.txt", "r")
+    out = io.open(out, "w")
+
+    local header = {
+        "// Generated from Blocks.txt by 'premake5 tables'.",
+        "",
+        "struct block_range {",
+        "    char32_t first;",
+        "    char32_t last;",
+        "    const char* desc;",
+        "};",
+        "",
+    }
+
+    for _,line in ipairs(header) do
+        out:write(line)
+        out:write("\n")
+    end
+
+    out:write("\nstatic const struct block_range c_blocks[] = {\n\n");
+
+    local lineno = 0
+    for line in data:lines() do
+        lineno = lineno + 1
+        local first,last,description = line:match("^(%x+)..(%x+); *([^;]*) *$")
+        if first and not description:find("Surrogates") then
+            local as_num = tonumber(first, 16)
+            if as_num < 0xE0000 then
+                if as_num == 0 then
+                    first = 0x20
+                end
+                out:write(string.format("{0x%s,0x%s,\"%s\"},\n", first, last, escape_cpp(description)))
+            end
+        end
+    end
+
+    out:write("{}\n\n};\n")
+
+    out:close()
+end
+
+--------------------------------------------------------------------------------
 newaction {
     trigger = "tables",
     description = "Update Unicode tables for wcwidth-verifier",
     execute = function ()
         do_emojis()
         do_assigned()
+        do_blocks()
     end
 }

@@ -4,12 +4,16 @@
 #include "wcwidth.h"
 
 static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
-static WCHAR s_placeholder = ' ';
-static int s_always_clear = true;
-static int s_skip_combining = true;
-static int s_skip_color_emoji = true;
-static int s_skip_eaa = false;
-static int s_skip_ideographs = true;
+static char32_t s_prefix = '\0';
+static char32_t s_suffix = ' ';
+static bool s_verbose = false;
+static bool s_skip_combining = false;
+static bool s_skip_color_emoji = true;
+static bool s_skip_eaa = false;
+static bool s_skip_ideographs = true;
+static bool s_combining_marks_zero = false;
+
+#include "unicode-blocks.i"
 
 class utf16fromutf32
 {
@@ -47,13 +51,24 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
 {
     utf16fromutf32 s(ucs);
 
+    DWORD written = 0;
     CONSOLE_SCREEN_BUFFER_INFO csbiBefore;
     if (!GetConsoleScreenBufferInfo(s_hout, &csbiBefore))
         return -1;
     if (csbiBefore.dwCursorPosition.X != 0)
         return -1;
 
-    DWORD written = 0;
+    if (s_prefix)
+    {
+        utf16fromutf32 pre(s_prefix);
+        if (!WriteConsoleW(s_hout, pre.c_str(), pre.length(), &written, nullptr))
+            return -1;
+        if (written != pre.length())
+            return -1;
+        if (!GetConsoleScreenBufferInfo(s_hout, &csbiBefore))
+            return -1;
+    }
+
     if (!WriteConsoleW(s_hout, s.c_str(), s.length(), &written, nullptr))
         return -1;
     if (written != s.length())
@@ -69,20 +84,24 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     if (width < 0 || width > 2)
         return -1;
 
-    if (!WriteConsoleW(s_hout, &s_placeholder, 1, &written, nullptr))
-        return -1;
-    if (written != 1)
-        return -1;
+    bool suffix_effect = false;
+    if (s_suffix)
+    {
+        utf16fromutf32 suf(s_suffix);
+        if (!WriteConsoleW(s_hout, suf.c_str(), suf.length(), &written, nullptr))
+            return -1;
+        if (written != suf.length())
+            return -1;
 
-    CONSOLE_SCREEN_BUFFER_INFO csbiAfter2;
-    if (!GetConsoleScreenBufferInfo(s_hout, &csbiAfter2))
-        return -1;
-    if (csbiAfter2.dwCursorPosition.X != width + 1)
-        return -1;
+        CONSOLE_SCREEN_BUFFER_INFO csbiAfter2;
+        if (!GetConsoleScreenBufferInfo(s_hout, &csbiAfter2))
+            return -1;
+        suffix_effect = (csbiAfter2.dwCursorPosition.X != csbiBefore.dwCursorPosition.X + width + 1);
+    }
 
-    const int ok = (width == wcwidth(ucs));
+    const int ok = (width == wcwidth(ucs)) && !suffix_effect;
 
-    if (ok || s_always_clear)
+    if (ok || !s_verbose)
     {
         SetConsoleCursorPosition(s_hout, csbiBefore.dwCursorPosition);
         WriteConsoleW(s_hout, L"        ", 8, &written, nullptr);
@@ -90,11 +109,13 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     }
     else
     {
-        printf("%s   0x%X, width %u, expected %u", (s_placeholder == ' ') ? "" : " ", (unsigned int)ucs, width, expected_width);
+        printf("%s   0x%04X, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (unsigned int)ucs, width, expected_width);
         const char* desc = is_assigned(ucs);
         if (desc && *desc)
             printf("    %s", desc);
         puts("");
+        if (suffix_effect)
+            printf("        WARNING:  Suffix codepoint affected the width after measurement!\n");
     }
 
     return ok;
@@ -152,19 +173,96 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
     return true;
 }
 
-static bool handle_bool_option(const char* arg, const char* name, int* flag)
+enum class option_type { boolean, codepoint };
+
+struct option_definition
 {
-    if (arg[0] != '-' || arg[1] != '-')
-        return false;
-    arg += 2;
-    const bool no = (arg[0] == 'n' && arg[1] == 'o' && arg[2] == '-');
-    if (no)
-        arg += 3;
-    if (strcmp(arg, name) != 0)
-        return false;
-    *flag = !no;
+    const char*     name;
+    option_type     type;
+    void*           value;
+};
+
+static bool parse_options(int& argc, char**& argv, const option_definition* options)
+{
+    int keep_argc = 0;
+
+    for (int i = 0; i < argc; ++i)
+    {
+        if (argv[i][0] != '-' || argv[i][1] != '-')
+        {
+            argv[keep_argc++] = argv[i];
+            continue;
+        }
+
+        bool found = false;
+        for (const option_definition* o = options; o->name; ++o)
+        {
+            const char* arg = argv[i] + 2;
+            const bool no = (o->type == option_type::boolean && strncmp(arg, "no-", 3) == 0);
+            if (no)
+                arg += 3;
+            if (strcmp(arg, o->name) == 0)
+            {
+                found = true;
+                switch (o->type)
+                {
+                case option_type::boolean:
+                    *static_cast<bool*>(o->value) = !no;
+                    break;
+                case option_type::codepoint:
+                    {
+                        interval interval;
+                        if (i + 1 >= argc)
+                        {
+                            fprintf(stderr, "Missing argument for %s.\n", argv[i]);
+                            exit(1);
+                            return false;
+                        }
+                        ++i;
+                        if (!ParseCodepoint(argv[i], interval) || interval.first != interval.last)
+                        {
+                            fprintf(stderr, "Unable to parse '%s' as a codepoint.\n", argv[i]);
+                            exit(1);
+                            return false;
+                        }
+                        *static_cast<char32_t*>(o->value) = interval.first;
+                    }
+                    break;
+                default:
+                    fprintf(stderr, "Unknown option type %d.\n", o->type);
+                    exit(1);
+                    return false;
+                }
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            // Unrecognized option; return false to indicate help is requested.
+            return false;
+        }
+    }
+
+    argc = keep_argc;
     return true;
 }
+
+static const option_definition c_options[] =
+{
+    { "verbose",                option_type::boolean,     &s_verbose },
+    { "prefix",                 option_type::codepoint,   &s_prefix },
+    { "suffix",                 option_type::codepoint,   &s_suffix },
+    { "color-emoji",            option_type::boolean,     &g_color_emoji },
+    { "full-width",             option_type::boolean,     &g_full_width_available },
+    { "only-ucs2",              option_type::boolean,     &g_only_ucs2 },
+    { "skip-combining",         option_type::boolean,     &s_skip_combining },
+    { "skip-color-emoji",       option_type::boolean,     &s_skip_color_emoji },
+    { "skip-eaa",               option_type::boolean,     &s_skip_eaa },
+    { "skip-ideographs",        option_type::boolean,     &s_skip_ideographs },
+    { "combining-marks-zero",   option_type::boolean,     &s_combining_marks_zero },
+    {}
+};
 
 int main(int argc, char** argv)
 {
@@ -177,144 +275,191 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    static const interval c_ranges[] =
+    if (!parse_options(argc, argv, c_options))
     {
-        { 0x20, 0x7e },
-        { 0xa0, 0xD7FF },
-        { 0xE000, 0xFFFF },
-        { 0x10000, 0x1FFFF },
-        {}
-    };
+        static const char usage[] =
+        "Usage:  wcwv [flags] [codepoint [...]]\n"
+        "\n"
+        "  Each \"codepoint\" can be a single codepoint in decimal or hexadecimal (0x...),\n"
+        "  or a range such as \"0x300..0x31F\".\n"
+        "\n"
+        "Options:\n"
+        "  --help                Display this help.\n"
+        "  --prefix codepoint    Set codepoint for prefix character.\n"
+        "  --suffix codepoint    Set codepoint for suffix character (default is 0x20).\n"
+        "\n"
+        "  NOTE:  prefix and suffix codepoints can be used to help analyze how combining\n"
+        "  characters affects grapheme widths.\n"
+        "\n"
+        "On/off options:\n"
+        "  --verbose             Verbose output; don't erase failed codepoints.\n"
+        "  --color-emoji         Assume the terminal supports color emoji.\n"
+        "  --full-width          Assume Full Width characters are full width (default).\n"
+        "  --only-ucs2           Assume only UCS2 support.\n"
+        "  --combing-marks-zero  Assume Combining Marks are zero width.\n"
+        "  --skip-combining      Skip testing combining marks.\n"
+        "  --skip-color-emoji    Skip testing color emoji (default).\n"
+        "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
+        "  --skip-ideographs     Skip testing ideograph ranges (default).\n"
+        "\n"
+        "  NOTE:  On/off options can be enabled by --name or disabled by --no-name.\n"
+        "  NOTE:  Windows 8.1 and lower seem to behave like --no-full-width.\n"
+        "\n"
+        "Examples:\n"
+        "\n"
+        "  wcwv                          Run the full tests.\n"
+        "  wcwv --no-clear-failed        Run the full tests, and leave failed codepoints\n"
+        "                                visible after failing.\n"
+        "  wcwv 0x300                    Run the test on codepoint 0x300.\n"
+        "  wcwv 0x300 0x301              Run the test on codepoints 0x300 and 0x301.\n"
+        "  wcwv 0x300..0x3FF             Run the test on codepoints 0x300 through 0x3FF.\n"
+        "  wcwv 0x20..0x2F 0x40..0x5F    Run the test on codepoints 0x20 through 0x2F\n"
+        "                                and 0x40 through 0x5F.\n"
+        ;
+        printf("%s", usage);
+        return 0;
+    }
 
-    std::vector<interval> manual_ranges;
+    g_combining_marks_wcwidth = (s_combining_marks_zero ? 0 : 1);
 
-    goto first_arg;
-next_arg:
-    --argc, ++argv;
-first_arg:
+    std::vector<block_range> manual_ranges;
+
     if (argc)
     {
-        if (argv[0][0] == '-' && argv[0][1] == '-')
+        for (int i = 0; i < argc; ++i)
         {
-            if (strcmp(argv[0], "--always-clear") == 0)
+            if (argv[0][0] < '0' || argv[0][0] > '9')
             {
-                s_always_clear = true;
-                goto next_arg;
+                fprintf(stderr, "Unrecognized codepoint '%s'.\n", argv[0]);
+                return 1;
             }
-            else if (strcmp(argv[0], "--no-clear-failed") == 0)
-            {
-                s_always_clear = false;
-                goto next_arg;
-            }
-            else if (handle_bool_option(argv[0], "color-emoji", &g_color_emoji) ||
-                     handle_bool_option(argv[0], "full-width", &g_full_width_available) ||
-                     handle_bool_option(argv[0], "only-ucs2", &g_only_ucs2) ||
-                     handle_bool_option(argv[0], "skip-combining", &s_skip_combining) ||
-                     handle_bool_option(argv[0], "skip-color-emoji", &s_skip_color_emoji) ||
-                     handle_bool_option(argv[0], "skip-eaa", &s_skip_eaa) ||
-                     handle_bool_option(argv[0], "skip-ideographs", &s_skip_ideographs))
-            {
-                goto next_arg;
-            }
-            else
-            {
-                static const char usage[] =
-                "Usage:  wcwv [flags] [codepoint [...]]\n"
-                "n"
-                "  --help                Display this help.\n"
-                "  --always-clear        Always clear codepoints after printing them (default).\n"
-                "  --no-clear-failed     Leave failed codepoints on the screen.\n"
-                "  --color-emoji         Assume the terminal supports color emoji (default).\n"
-                "  --no-color-emoji      Assume the terminal does not support color emoji.\n"
-                "  --full-width          Assume Full Width characters are full width (default).\n"
-                "  --no-full-width       Assume Full Width characters are half width.\n"
-                "  --only-ucs2           Assume only UCS2 support.\n"
-                "  --no-only-ucs2        Assume Unicode Surrogate Pairs support (default).\n"
-                "  --skip-combining      Skip testing combining marks.\n"
-                "  --skip-color-emoji    Skip testing color emoji.\n"
-                "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
-                "\n"
-                "  Each \"codepoint\" can be a single codepoint in decimal or hexadecimal (0x...),\n"
-                "  or a range such as \"0x300..0x31F\"."
-                "\n"
-                "Examples:\n"
-                "\n"
-                "  wcwv                          Run the full tests.\n"
-                "  wcwv --no-clear-failed        Run the full tests, and leave failed codepoints\n"
-                "                                visible after failing.\n"
-                "  wcwv 0x300                    Run the test on codepoint 0x300.\n"
-                "  wcwv 0x300 0x301              Run the test on codepoints 0x300 and 0x301.\n"
-                "  wcwv 0x300..0x3FF             Run the test on codepoints 0x300 through 0x3FF.\n"
-                "  wcwv 0x20..0x2F 0x40..0x5F    Run the test on codepoints 0x20 through 0x2F\n"
-                "                                and 0x40 through 0x5F.\n"
-                ;
-                printf("%s", usage);
-                return 0;
-            }
-        }
-        else if (argv[0][0] >= '0' && argv[0][0] <= '9')
-        {
+
             interval interval;
             if (!ParseCodepoint(argv[0], interval))
             {
                 fprintf(stderr, "Unable to parse '%s' as a codepoint or range of codepoints.\n", argv[0]);
                 return 1;
             }
-            manual_ranges.emplace_back(interval);
-            goto next_arg;
+            manual_ranges.push_back({interval.first, interval.last});
         }
-        else
-        {
-            fprintf(stderr, "Unrecognized codepoint '%s'.\n", argv[0]);
-            return 1;
-        }
+
+        if (!manual_ranges.empty())
+            manual_ranges.push_back({0, 0});
     }
 
-    if (!manual_ranges.empty())
-        manual_ranges.push_back({0, 0});
+#if 0
+    {
+        // This performs a test of how Combining Marks are handled by the
+        // console API subsystem.
 
-    const interval* const ranges = manual_ranges.empty() ? c_ranges : &manual_ranges.front();
+        DWORD written;
+        WCHAR buffer[400];
+        CONSOLE_SCREEN_BUFFER_INFO csbi, csbi2;
+
+        WriteConsoleW(s_hout, L"e\u0300", 2, &written, nullptr);
+        GetConsoleScreenBufferInfo(s_hout, &csbi);
+        _swprintf(buffer, L"\x1b[%uG", csbi.dwCursorPosition.X + 1);
+        WriteConsoleW(s_hout, buffer, DWORD(wcslen(buffer)), &written, nullptr);
+        GetConsoleScreenBufferInfo(s_hout, &csbi2);
+        printf("ONE CALL:   cursor X is %d (escape code coordinates%s match)\n", csbi.dwCursorPosition.X, (csbi.dwCursorPosition.X == csbi2.dwCursorPosition.X) ? "" : " DO NOT");
+
+        WriteConsoleW(s_hout, L"e", 1, &written, nullptr);
+        WriteConsoleW(s_hout, L"\u0300", 1, &written, nullptr);
+        GetConsoleScreenBufferInfo(s_hout, &csbi);
+        _swprintf(buffer, L"\x1b[%uG", csbi.dwCursorPosition.X + 1);
+        WriteConsoleW(s_hout, buffer, DWORD(wcslen(buffer)), &written, nullptr);
+        GetConsoleScreenBufferInfo(s_hout, &csbi2);
+        printf("TWO CALLS:  cursor X is %d (escape code coordinates%s match)\n", csbi.dwCursorPosition.X, (csbi.dwCursorPosition.X == csbi2.dwCursorPosition.X) ? "" : " DO NOT");
+
+        for (size_t i = 0; i < _countof(buffer) - 1; ++i)
+            buffer[i] = 'x';
+        buffer[csbi.dwSize.X] = '\0';
+        buffer[0] = 0x0065;
+        buffer[1] = 0x0300;
+        WriteConsoleW(s_hout, buffer, DWORD(wcslen(buffer)), &written, nullptr);
+        GetConsoleScreenBufferInfo(s_hout, &csbi2);
+        printf("\nAT END:  cursor X is %d\n", csbi2.dwCursorPosition.X);
+    }
+#endif
+
+    const block_range* const ranges = manual_ranges.empty() ? c_blocks : &manual_ranges.front();
     const DWORD began = GetTickCount();
 
     unsigned int tested = 0;
     unsigned int failed = 0;
 
-    for (const interval* range = ranges; range->first; ++range)
+    for (const block_range* range = ranges; range->first; ++range)
     {
-        char32_t prev = 0;
+        if (s_skip_ideographs && range->desc && strstr(range->desc, "Ideograph"))
+            continue;
+
+        // char32_t prev = 0;
+
         char32_t first_failure = 0;
         char32_t last_failure = 0;
 
-        CONSOLE_SCREEN_BUFFER_INFO csbi;
-        GetConsoleScreenBufferInfo(s_hout, &csbi);
-        SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
+        // CONSOLE_SCREEN_BUFFER_INFO csbi;
+        // GetConsoleScreenBufferInfo(s_hout, &csbi);
+        // SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
 
         if (range->first == range->last)
-            printf("CODEPOINT 0x%X", (unsigned int)range->first);
+            printf("CODEPOINT 0x%04X", (unsigned int)range->first);
+        else if (range->desc)
+            printf("0x%04X .. 0x%04X -- %s", (unsigned int)range->first, (unsigned int)range->last, range->desc);
         else
-            printf("RANGE 0x%X .. 0x%X", (unsigned int)range->first, (unsigned int)range->last);
+            printf("0x%04X .. 0x%04X", (unsigned int)range->first, (unsigned int)range->last);
 
-        SetConsoleTextAttribute(s_hout, csbi.wAttributes);
+        // SetConsoleTextAttribute(s_hout, csbi.wAttributes);
         puts("");
+
+        auto maybe_report_failure_range = [&](){
+            if (first_failure)
+            {
+                CONSOLE_SCREEN_BUFFER_INFO csbi;
+                HANDLE herr = GetStdHandle(STD_ERROR_HANDLE);
+                GetConsoleScreenBufferInfo(herr, &csbi);
+                SetConsoleTextAttribute(herr, (csbi.wAttributes & 0xF0) | 0x0C);
+
+                fprintf(stderr, "FAILED:  0x%04X..0x%04X do not match the expected width (%u codepoints).", (unsigned int)first_failure, (unsigned int)last_failure, (unsigned int)(last_failure + 1 - first_failure));
+
+                SetConsoleTextAttribute(herr, csbi.wAttributes);
+                fputs("\n", stderr);
+
+                first_failure = 0;
+                last_failure = 0;
+            }
+        };
 
         for (char32_t c = range->first; c <= range->last; ++c)
         {
-            if (IsSkip(c))
-                continue;
-
-            if (!is_assigned(c))
-                continue;
-
-            if (!prev || (prev >> 12) != (c >> 12))
+            const bool single_codepoint = (range->first == range->last);
+            if (!single_codepoint && IsSkip(c))
             {
-                printf("0x%X ...\n", (unsigned int)c);
-                prev = c;
+                maybe_report_failure_range();
+                continue;
             }
+
+            const bool assigned = is_assigned(c);
+            if (!assigned && !single_codepoint)
+            {
+                maybe_report_failure_range();
+                continue;
+            }
+
+            // if (!prev || (prev >> 12) != (c >> 12))
+            // {
+            //     if (!prev)
+            //         printf("0x%04X ...\n", (unsigned int)c);
+            //     prev = c;
+            // }
+
+            if (!assigned && single_codepoint)
+                printf("NOTE:  0x%04X is not an assigned codepoint.\n", (unsigned int)c);
 
             const int verified = VerifyWidth(c, wcwidth(c));
             if (verified < 0)
             {
-                fprintf(stderr, "INTERNAL FAILURE:  unable to verify 0x%X.\n", (unsigned int)c);
+                fprintf(stderr, "INTERNAL FAILURE:  unable to verify 0x%04X.\n", (unsigned int)c);
                 return 1;
             }
 
@@ -327,27 +472,29 @@ first_arg:
             }
             else
             {
-                if (first_failure)
-                {
-                    fprintf(stderr, "FAILED:  0x%X..0x%X do not match the expected width.\n", (unsigned int)first_failure, (unsigned int)last_failure);
-                    first_failure = 0;
-                    last_failure = 0;
-                }
+                maybe_report_failure_range();
             }
 
             ++tested;
         }
 
-        if (first_failure)
-        {
-            fprintf(stderr, "FAILED:  0x%X..0x%X do not match the expected width.\n", (unsigned int)first_failure, (unsigned int)last_failure);
-            first_failure = 0;
-            last_failure = 0;
-        }
+        maybe_report_failure_range();
     }
 
+    CONSOLE_SCREEN_BUFFER_INFO csbiAttr;
+    GetConsoleScreenBufferInfo(s_hout, &csbiAttr);
+
+    const float ratio = tested ? (float(failed) / float(tested)) : 0;
+    const WORD attr = (!failed ? 0x0A :
+                       (failed > 200 || ratio > 0.01f) ? 0x0C :
+                       0x0E);
+
     const DWORD elapsed = GetTickCount() - began;
-    printf("\nTested %u characters in %u.%03u seconds; %u failed.\n", tested, elapsed / 1000, elapsed % 1000, failed);
+    printf("\nTested %u codepoints in %u.%03u seconds; ", tested, elapsed / 1000, elapsed % 1000);
+    SetConsoleTextAttribute(s_hout, (csbiAttr.wAttributes & ~0xF) | attr);
+    printf("%u", failed);
+    SetConsoleTextAttribute(s_hout, csbiAttr.wAttributes);
+    printf(" failed.\n");
 
     return !!failed;
 }

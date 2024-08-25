@@ -67,6 +67,8 @@
 extern "C" {
 #endif
 
+int g_combining_marks_wcwidth = 0;
+
 int g_full_width_available = 1;
 int g_color_emoji = 1;
 int g_only_ucs2 = 0;
@@ -259,7 +261,7 @@ static int mk_wcwidth(char32_t ucs)
 
   /* binary search in table of non-spacing characters */
   if (bisearch(ucs, combining, _countof(combining) - 1))
-    return 0;
+    return g_combining_marks_wcwidth;
 
   /* if we arrive here, ucs is not a combining or C0/C1 control character */
   return 1 +

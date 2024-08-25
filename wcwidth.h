@@ -17,6 +17,7 @@ extern "C" int test_ambiguous_width_char(char32_t ucs, char32_t* peek=nullptr, u
 #else
 extern "C" int test_ambiguous_width_char(char32_t ucs, char32_t* peek, unsigned int peek_len);
 #endif
+extern "C" int g_combining_marks_wcwidth;   // Defaults to 0; setting this to 1 more accurately represents how the Windows Console subsystem works.
 extern "C" int g_full_width_available;
 extern "C" int g_color_emoji;
 extern "C" int g_only_ucs2;
