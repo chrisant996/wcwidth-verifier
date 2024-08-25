@@ -3,7 +3,7 @@ local to = ".build/"..(_ACTION or "nullaction")
 --------------------------------------------------------------------------------
 workspace("wcwidth-verifier")
     configurations({"debug"})
-    platforms({"x64"})
+    platforms({"x32", "x64"})
     location(to)
 
     characterset("MBCS")
