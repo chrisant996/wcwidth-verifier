@@ -21,7 +21,7 @@ You might be able to generate MinGW makefiles with `premake5 gmake`, but I won't
 
 1. `cd` to your clone of the wcwidth-verifier repo.
 2. Run <code>premake5.exe <em>toolchain</em></code> (where <em>toolchain</em> is one of Premake's actions - see `premake5.exe --help`)
-3. Build scripts will be generated in <code>.build\<em>toolchain</em></code>. For example `.build\vs2022\clink.sln`.
+3. Build scripts will be generated in <code>.build\\<em>toolchain</em></code>. For example `.build\vs2022\wcwidth-verifier.sln`.
 4. Call your toolchain of choice (VS, msbuild.exe, etc).
 
 ### Updating the Unicode Data Files
