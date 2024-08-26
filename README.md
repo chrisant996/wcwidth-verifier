@@ -13,7 +13,7 @@ The motivation was to help [Clink](https://github.com/chrisant996/clink) more ac
 
 This tool is meant for use by programmers familiar with Unicode, wcwidth, graphemes, terminal programs, console APIs, etc.  It isn't useful to other people.
 
-### Building The Tool
+### Building the Tool
 
 The tool uses [Premake](http://premake.github.io) to generate Visual Studio solutions.  Note that Premake >= 5.0.0-beta1 is required.
 
@@ -23,6 +23,13 @@ You might be able to generate MinGW makefiles with `premake5 gmake`, but I won't
 2. Run <code>premake5.exe <em>toolchain</em></code> (where <em>toolchain</em> is one of Premake's actions - see `premake5.exe --help`)
 3. Build scripts will be generated in <code>.build\<em>toolchain</em></code>. For example `.build\vs2022\clink.sln`.
 4. Call your toolchain of choice (VS, msbuild.exe, etc).
+
+### Updating the Unicode Data Files
+
+To update the Unicode data files:
+1. Download new Unicode data files from the addresses in the README.md file in the `unicode\` subdirectory, and save the files into that directory.
+2. Run `premake5.exe tables` to generate updated *.i data files.
+3. See [Building the Tool](#building-the-tool).
 
 ### License
 
