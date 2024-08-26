@@ -59,6 +59,12 @@
  * Latest version: http://www.cl.cam.ac.uk/~mgk25/ucs/wcwidth.c
  */
 
+/*
+ *
+ * MODIFIED FOR wcwidth-verifier BY https://github.com/chrisant996.
+ *
+ */
+
 #include <stdlib.h>
 #include <windows.h>
 #include <wchar.h>
