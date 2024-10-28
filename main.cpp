@@ -12,6 +12,7 @@ static bool s_skip_color_emoji = true;
 static bool s_skip_eaa = false;
 static bool s_skip_ideographs = true;
 static bool s_combining_marks_zero = false;
+static bool s_show_width = false;
 
 #include "unicode-blocks.i"
 
@@ -101,7 +102,7 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
 
     const int ok = (width == wcwidth(ucs)) && !suffix_effect;
 
-    if (ok || !s_verbose)
+    if (!s_show_width && (ok || !s_verbose))
     {
         SetConsoleCursorPosition(s_hout, csbiBefore.dwCursorPosition);
         WriteConsoleW(s_hout, L"        ", 8, &written, nullptr);
@@ -146,6 +147,11 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
     int radix = 10;
 
     if (arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X'))
+    {
+        radix = 16;
+        arg += 2;
+    }
+    else if ((arg[0] == 'U' || arg[0] == 'u') && arg[1] == '+')
     {
         radix = 16;
         arg += 2;
@@ -261,6 +267,7 @@ static const option_definition c_options[] =
     { "skip-eaa",               option_type::boolean,     &s_skip_eaa },
     { "skip-ideographs",        option_type::boolean,     &s_skip_ideographs },
     { "combining-marks-zero",   option_type::boolean,     &s_combining_marks_zero },
+    { "show-width",             option_type::boolean,     &s_show_width },
     {}
 };
 
@@ -293,7 +300,7 @@ int main(int argc, char** argv)
         "\n"
         "On/off options:\n"
         "  --verbose             Verbose output; don't erase failed codepoints.\n"
-        "  --color-emoji         Assume the terminal supports color emoji.\n"
+        "  --color-emoji         Assume the terminal supports color emoji (default).\n"
         "  --full-width          Assume Full Width characters are full width (default).\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
         "  --combing-marks-zero  Assume Combining Marks are zero width.\n"
@@ -301,6 +308,7 @@ int main(int argc, char** argv)
         "  --skip-color-emoji    Skip testing color emoji (default).\n"
         "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
         "  --skip-ideographs     Skip testing ideograph ranges (default).\n"
+        "  --show-width          Shows expected and actual width for each character.\n"
         "\n"
         "  NOTE:  On/off options can be enabled by --name or disabled by --no-name.\n"
         "  NOTE:  Windows 8.1 and lower seem to behave like --no-full-width.\n"
