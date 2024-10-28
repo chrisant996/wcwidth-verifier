@@ -7,11 +7,8 @@ static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
 static char32_t s_prefix = '\0';
 static char32_t s_suffix = ' ';
 static bool s_verbose = false;
-static bool s_skip_combining = false;
-static bool s_skip_color_emoji = true;
-static bool s_skip_eaa = false;
-static bool s_skip_ideographs = true;
 static bool s_combining_marks_zero = false;
+static bool s_group_headers = true;
 static bool s_show_width = false;
 
 #include "unicode-blocks.i"
@@ -122,17 +119,47 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     return ok;
 }
 
+static bool s_skip_all = false;
+static bool s_skip_combining = false;
+static bool s_skip_color_emoji = false;
+static bool s_skip_eaa = false;
+static bool s_skip_ideographs = true;
+
+static void SetSkipAll(bool skip)
+{
+    s_skip_all = skip;
+    s_skip_combining = skip;
+    s_skip_color_emoji = skip;
+    s_skip_eaa = skip;
+    s_skip_ideographs = skip;
+}
+
 static bool IsSkip(char32_t c)
 {
-    if (s_skip_combining && is_combining(c))
+    if (s_skip_all)
+    {
+        if (!s_skip_combining && is_combining(c))
+            return false;
+        if (!s_skip_color_emoji && is_color_emoji(c))
+            return false;
+        if (!s_skip_eaa && is_east_asian_ambiguous(c))
+            return false;
+        if (!s_skip_ideographs && is_ideograph(c))
+            return false;
         return true;
-    if (s_skip_color_emoji && is_color_emoji(c))
-        return true;
-    if (s_skip_eaa && is_east_asian_ambiguous(c))
-        return true;
-    if (s_skip_ideographs && is_ideograph(c))
-        return true;
-    return false;
+    }
+    else
+    {
+        if (s_skip_combining && is_combining(c))
+            return true;
+        if (s_skip_color_emoji && is_color_emoji(c))
+            return true;
+        if (s_skip_eaa && is_east_asian_ambiguous(c))
+            return true;
+        if (s_skip_ideographs && is_ideograph(c))
+            return true;
+        return false;
+    }
 }
 
 struct interval
@@ -213,7 +240,10 @@ static bool parse_options(int& argc, char**& argv, const option_definition* opti
                 switch (o->type)
                 {
                 case option_type::boolean:
-                    *static_cast<bool*>(o->value) = !no;
+                    if (strcmp(o->name, "skip-all") == 0)
+                        SetSkipAll(!no);
+                    else
+                        *static_cast<bool*>(o->value) = !no;
                     break;
                 case option_type::codepoint:
                     {
@@ -262,10 +292,12 @@ static const option_definition c_options[] =
     { "color-emoji",            option_type::boolean,     &g_color_emoji },
     { "full-width",             option_type::boolean,     &g_full_width_available },
     { "only-ucs2",              option_type::boolean,     &g_only_ucs2 },
+    { "group-headers",          option_type::boolean,     &s_group_headers },
     { "skip-combining",         option_type::boolean,     &s_skip_combining },
     { "skip-color-emoji",       option_type::boolean,     &s_skip_color_emoji },
     { "skip-eaa",               option_type::boolean,     &s_skip_eaa },
     { "skip-ideographs",        option_type::boolean,     &s_skip_ideographs },
+    { "skip-all",               option_type::boolean,     &s_skip_all },
     { "combining-marks-zero",   option_type::boolean,     &s_combining_marks_zero },
     { "show-width",             option_type::boolean,     &s_show_width },
     {}
@@ -304,11 +336,14 @@ int main(int argc, char** argv)
         "  --full-width          Assume Full Width characters are full width (default).\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
         "  --combing-marks-zero  Assume Combining Marks are zero width.\n"
+        "  --group-headers       Shows names of groups of codepoints (default).\n"
+        "  --show-width          Shows expected and actual width for each character.\n"
         "  --skip-combining      Skip testing combining marks.\n"
-        "  --skip-color-emoji    Skip testing color emoji (default).\n"
+        "  --skip-color-emoji    Skip testing color emoji.\n"
         "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
         "  --skip-ideographs     Skip testing ideograph ranges (default).\n"
-        "  --show-width          Shows expected and actual width for each character.\n"
+        "  --skip-all            Skip testing all ranges (use --no-skip-whatever to add\n"
+        "                        back specific ranges).\n"
         "\n"
         "  NOTE:  On/off options can be enabled by --name or disabled by --no-name.\n"
         "  NOTE:  Windows 8.1 and lower seem to behave like --no-full-width.\n"
@@ -406,19 +441,22 @@ int main(int argc, char** argv)
         char32_t first_failure = 0;
         char32_t last_failure = 0;
 
-        // CONSOLE_SCREEN_BUFFER_INFO csbi;
-        // GetConsoleScreenBufferInfo(s_hout, &csbi);
-        // SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
+        if (s_group_headers)
+        {
+            // CONSOLE_SCREEN_BUFFER_INFO csbi;
+            // GetConsoleScreenBufferInfo(s_hout, &csbi);
+            // SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
 
-        if (range->first == range->last)
-            printf("CODEPOINT 0x%04X", (unsigned int)range->first);
-        else if (range->desc)
-            printf("0x%04X .. 0x%04X -- %s", (unsigned int)range->first, (unsigned int)range->last, range->desc);
-        else
-            printf("0x%04X .. 0x%04X", (unsigned int)range->first, (unsigned int)range->last);
+            if (range->first == range->last)
+                printf("CODEPOINT 0x%04X", (unsigned int)range->first);
+            else if (range->desc)
+                printf("0x%04X .. 0x%04X -- %s", (unsigned int)range->first, (unsigned int)range->last, range->desc);
+            else
+                printf("0x%04X .. 0x%04X", (unsigned int)range->first, (unsigned int)range->last);
 
-        // SetConsoleTextAttribute(s_hout, csbi.wAttributes);
-        puts("");
+            // SetConsoleTextAttribute(s_hout, csbi.wAttributes);
+            puts("");
+        }
 
         auto maybe_report_failure_range = [&](){
             if (first_failure)
