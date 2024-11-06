@@ -93,7 +93,8 @@ local function load_indexed_emoji_table(file)
                     indexed[d] = t
                 end
                 local sequence = line:match("^([0-9A-Fa-f ]+)"):gsub("%w+$", "")
-                table.insert(t, sequence)
+                local name = line:match("; [^%s]+%s+# [^%s]+ (.*)$")
+                table.insert(t, { sequence, name })
             end
         end
     end
@@ -143,34 +144,36 @@ end
 local function output_emoji_forms(out, tag, indexed, possible_unqualified_half_width, filtered)
     local forms = {}
 
-    forms[0xfe0f] = { "FE0F" }
-    forms[0x1f3fb] = { "1F3FB" }
-    forms[0x1f3fc] = { "1F3FC" }
-    forms[0x1f3fd] = { "1F3FD" }
-    forms[0x1f3fe] = { "1F3FE" }
-    forms[0x1f3ff] = { "1F3FF" }
-
     for d, v in pairs(indexed) do
         if not filtered[d] or possible_unqualified_half_width[d] then
             forms[d] = v
         end
     end
 
+    forms[0xfe0e] = { { "FE0E", "VARIATION SELECTOR-15" } }
+    forms[0xfe0f] = { { "FE0F", "VARIATION SELECTOR-16" } }
     forms[0x1f3f4] = nil    -- FUTURE: Windows Terminal doesn't support the E5.0 flag "subdivision-flag" sequences.
+    forms[0x1f3fb] = { { "1F3FB", "EMOJI MODIFIER FITZPATRICK TYPE-1-2" } }
+    forms[0x1f3fc] = { { "1F3FC", "EMOJI MODIFIER FITZPATRICK TYPE-3" } }
+    forms[0x1f3fd] = { { "1F3FD", "EMOJI MODIFIER FITZPATRICK TYPE-4" } }
+    forms[0x1f3fe] = { { "1F3FE", "EMOJI MODIFIER FITZPATRICK TYPE-5" } }
+    forms[0x1f3ff] = { { "1F3FF", "EMOJI MODIFIER FITZPATRICK TYPE-6" } }
 
     -- Declaration.
-    out:write("\nstatic const emoji_form_sequences " .. tag .. "[] = {\n\n")
+    out:write("\nstatic const emoji_form_sequence " .. tag .. "[] = {\n\n")
 
     for ucs, t in spairs(forms) do
-        local sequences = ""
-        for _, list in ipairs(t) do
-            local seq = {}
-            for x in string.gmatch(list, "[0-9A-Fa-f]+") do
-                table.insert(seq, utf32to8(tonumber(x, 16)))
+        for _, form in ipairs(t) do
+            local seq = ""
+            for x in string.gmatch(form[1], "[0-9A-Fa-f]+") do
+                seq = seq .. utf32to8(tonumber(x, 16))
             end
-            sequences = sequences .. string.format("%s\\x00", table.concat(seq))
+            if form[2] then
+                out:write(string.format("{ 0x%X, \"%s\", \"%s\" },\n", ucs, seq, form[2]:upper()))
+            else
+                out:write(string.format("{ 0x%X, \"%s\" },\n", ucs, seq))
+            end
         end
-        out:write(string.format("{ 0x%X, \"%s\" },\n", ucs, sequences))
     end
 
     out:write("\n};\n")

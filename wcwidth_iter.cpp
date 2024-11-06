@@ -102,10 +102,10 @@ fully_qualified:
                 m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
                 m_next = m_iter.next();
             }
-            else if (c == 0x303d)
+            else if (c == 0x3030 || c == 0x303d || c == 0x3297 || c == 0x3299)
             {
-                // Special case:  Windows Terminal renders unqualified 303D
-                // the same as fully-qualified 303D FE0F.
+                // Special cases:  Windows Terminal renders some unqualified
+                // emoji the same as their fully-qualified forms.
                 assert(m_chr_wcwidth > 0);
                 goto fully_qualified;
             }

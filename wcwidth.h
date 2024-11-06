@@ -22,11 +22,17 @@ bool is_variant_selector(char32_t ucs);
 bool is_possible_unqualified_half_width(char32_t ucs);
 bool is_emoji(char32_t ucs);
 
-const char* get_emoji_form_sequences(char32_t ucs);
-const char* next_emoji_form_sequence(const char* sequences);
-
 extern bool g_full_width_available;
 extern bool g_color_emoji;
+
+//------------------------------------------------------------------------------
+struct emoji_form_sequence {
+  char32_t ucs;
+  const char* seq;
+  const char* desc;
+};
+
+const emoji_form_sequence* get_emoji_form_sequence(char32_t ucs);
 
 //------------------------------------------------------------------------------
 class combining_mark_width_scope

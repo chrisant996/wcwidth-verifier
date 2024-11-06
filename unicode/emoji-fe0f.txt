@@ -489,8 +489,10 @@
 1F202                                                  ; unqualified         # 🈂 E0.6 Japanese “service charge” button
 1F237 FE0F                                             ; fully-qualified     # 🈷️ E0.6 Japanese “monthly amount” button
 1F237                                                  ; unqualified         # 🈷 E0.6 Japanese “monthly amount” button
+; SPECIAL CASE:  Windows Terminal renders 3297 the same as 3297 FE0F, differing from the usual unqualified behavior.
 3297 FE0F                                              ; fully-qualified     # ㊗️ E0.6 Japanese “congratulations” button
 3297                                                   ; unqualified         # ㊗ E0.6 Japanese “congratulations” button
+; SPECIAL CASE:  Windows Terminal renders 3299 the same as 3299 FE0F, differing from the usual unqualified behavior.
 3299 FE0F                                              ; fully-qualified     # ㊙️ E0.6 Japanese “secret” button
 3299                                                   ; unqualified         # ㊙ E0.6 Japanese “secret” button
 

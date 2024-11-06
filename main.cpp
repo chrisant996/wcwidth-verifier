@@ -11,6 +11,7 @@ static bool s_combining_marks_zero = false;
 static bool s_group_headers = true;
 static bool s_show_width = false;
 static bool s_only_ucs2 = false;
+static bool s_decimal = false;
 
 bool g_full_width_available = true;
 bool g_color_emoji = false;
@@ -111,7 +112,7 @@ static int32 VerifyWidth(char32_t ucs, const int32 expected_width)
     }
     else
     {
-        printf("%s   0x%04X, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (uint32)ucs, width, expected_width);
+        printf("%s   %04X, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (uint32)ucs, width, expected_width);
         const char* desc = is_assigned(ucs);
         if (desc && *desc)
             printf("    %s", desc);
@@ -123,10 +124,10 @@ static int32 VerifyWidth(char32_t ucs, const int32 expected_width)
     return ok;
 }
 
-static int32 VerifyWidth(char32_t ucs, const char* sequence, int32 index)
+static int32 VerifyWidth(const emoji_form_sequence* sequence)
 {
     wchar_t s[64];
-    MultiByteToWideChar(CP_UTF8, 0, sequence, -1, s, _countof(s));
+    MultiByteToWideChar(CP_UTF8, 0, sequence->seq, -1, s, _countof(s));
 
     DWORD written = 0;
     CONSOLE_SCREEN_BUFFER_INFO csbiBefore;
@@ -177,7 +178,7 @@ static int32 VerifyWidth(char32_t ucs, const char* sequence, int32 index)
         suffix_effect = (csbiAfter2.dwCursorPosition.X != csbiBefore.dwCursorPosition.X + width + 1);
     }
 
-    const int32 expected_width = wcswidth(sequence, uint32(strlen(sequence)));
+    const int32 expected_width = wcswidth(sequence->seq, uint32(strlen(sequence->seq)));
     const int32 ok = (width == expected_width) && !suffix_effect;
 
     if (!s_show_width && (ok || !s_verbose))
@@ -188,8 +189,17 @@ static int32 VerifyWidth(char32_t ucs, const char* sequence, int32 index)
     }
     else
     {
-        printf("%s   0x%04X sequence %d, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (uint32)ucs, index, width, expected_width);
-        const char* desc = is_assigned(ucs);
+        printf("%s   ", (s_suffix == ' ') ? "" : " ");
+        str_iter iter(sequence->seq);
+        while (iter.more())
+        {
+            if (iter.get_pointer() > sequence->seq)
+                printf(" ");
+            const int32 c = iter.next();
+            printf("%04X", c);
+        }
+        printf(", width %u, expected %u", width, expected_width);
+        const char* desc = sequence->desc;
         if (desc && *desc)
             printf("    %s", desc);
         puts("");
@@ -258,7 +268,7 @@ struct interval
 static bool ParseCodepoint(const char* arg, interval& range, bool end_range=false)
 {
     char* end;
-    int32 radix = 10;
+    int32 radix = s_decimal ? 10 : 16;
 
     if (arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X'))
     {
@@ -376,6 +386,7 @@ static const option_definition c_options[] =
     { "verbose",                option_type::boolean,     &s_verbose },
     { "prefix",                 option_type::codepoint,   &s_prefix },
     { "suffix",                 option_type::codepoint,   &s_suffix },
+    { "decimal",                option_type::boolean,     &s_decimal },
     { "color-emoji",            option_type::boolean,     &g_color_emoji },
     { "full-width",             option_type::boolean,     &g_full_width_available },
     { "only-ucs2",              option_type::boolean,     &s_only_ucs2 },
@@ -410,13 +421,16 @@ int main(int argc, char** argv)
         static const char usage[] =
         "Usage:  wcwv [flags] [codepoint [...]]\n"
         "\n"
-        "  Each \"codepoint\" can be a single codepoint in decimal or hexadecimal (0x...),\n"
-        "  or a range such as \"0x300..0x31F\".\n"
+        "  Each \"codepoint\" can be a single value, or a range of values denoted by two\n"
+        "  values separated by '..' (such as '0x300..0x31F').  By default, values are\n"
+        "  assumed to be in hexadecimal unless --decimal is used.  The '0x' or 'U+'\n"
+        "  prefixes specify hexadecimal even when --decimal is used.\n"
         "\n"
         "Options:\n"
         "  --help                Display this help.\n"
         "  --prefix codepoint    Set codepoint for prefix character.\n"
-        "  --suffix codepoint    Set codepoint for suffix character (default is 0x20).\n"
+        "  --suffix codepoint    Set codepoint for suffix character (default is U+20,\n"
+        "                        which is the space character).\n"
         "\n"
         "  NOTE:  prefix and suffix codepoints can be used to help analyze how combining\n"
         "  characters affects grapheme widths.\n"
@@ -424,6 +438,7 @@ int main(int argc, char** argv)
         "On/off options:\n"
         "  --verbose             Verbose output; don't erase failed codepoints.\n"
         "  --color-emoji         Assume the terminal supports color emoji (default).\n"
+        "  --decimal             Use decimal for input numbers (default is hexadecimal).\n"
         "  --full-width          Assume Full Width characters are full width (default).\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
         "  --combing-marks-zero  Assume Combining Marks are zero width.\n"
@@ -445,11 +460,11 @@ int main(int argc, char** argv)
         "  wcwv                          Run the full tests.\n"
         "  wcwv --no-clear-failed        Run the full tests, and leave failed codepoints\n"
         "                                visible after failing.\n"
-        "  wcwv 0x300                    Run the test on codepoint 0x300.\n"
-        "  wcwv 0x300 0x301              Run the test on codepoints 0x300 and 0x301.\n"
-        "  wcwv 0x300..0x3FF             Run the test on codepoints 0x300 through 0x3FF.\n"
-        "  wcwv 0x20..0x2F 0x40..0x5F    Run the test on codepoints 0x20 through 0x2F\n"
-        "                                and 0x40 through 0x5F.\n"
+        "  wcwv 300                      Run the test on codepoint U+300.\n"
+        "  wcwv 300 301                  Run the test on codepoints U+300 and U+301.\n"
+        "  wcwv 300..3FF                 Run the test on codepoints U+300 through U+3FF.\n"
+        "  wcwv 20..2F 40..5F            Run the test on codepoints U+20 through U+2F\n"
+        "                                and U+40 through U+5F.\n"
         ;
         printf("%s", usage);
         return 0;
@@ -542,11 +557,11 @@ int main(int argc, char** argv)
             // SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
 
             if (range->first == range->last)
-                printf("CODEPOINT 0x%04X", uint32(range->first));
+                printf("CODEPOINT %04X", uint32(range->first));
             else if (range->desc)
-                printf("0x%04X .. 0x%04X -- %s", uint32(range->first), uint32(range->last), range->desc);
+                printf("%04X .. %04X -- %s", uint32(range->first), uint32(range->last), range->desc);
             else
-                printf("0x%04X .. 0x%04X", uint32(range->first), uint32(range->last));
+                printf("%04X .. %04X", uint32(range->first), uint32(range->last));
 
             // SetConsoleTextAttribute(s_hout, csbi.wAttributes);
             puts("");
@@ -560,7 +575,7 @@ int main(int argc, char** argv)
                 GetConsoleScreenBufferInfo(herr, &csbi);
                 SetConsoleTextAttribute(herr, (csbi.wAttributes & 0xF0) | 0x0C);
 
-                fprintf(stderr, "FAILED:  0x%04X..0x%04X do not match the expected width (%u codepoints).", uint32(first_failure), uint32(last_failure), uint32(last_failure + 1 - first_failure));
+                fprintf(stderr, "FAILED:  %04X..%04X do not match the expected width (%u codepoints).", uint32(first_failure), uint32(last_failure), uint32(last_failure + 1 - first_failure));
 
                 SetConsoleTextAttribute(herr, csbi.wAttributes);
                 fputs("\n", stderr);
@@ -589,24 +604,23 @@ int main(int argc, char** argv)
             // if (!prev || (prev >> 12) != (c >> 12))
             // {
             //     if (!prev)
-            //         printf("0x%04X ...\n", uint32(c));
+            //         printf("%04X ...\n", uint32(c));
             //     prev = c;
             // }
 
             if (!assigned && single_codepoint)
-                printf("NOTE:  0x%04X is not an assigned codepoint.\n", uint32(c));
+                printf("NOTE:  %04X is not an assigned codepoint.\n", uint32(c));
 
             int32 verified = true;
-            const char* sequences = get_emoji_form_sequences(c);
-            if (sequences)
+            const emoji_form_sequence* sequence = get_emoji_form_sequence(c);
+            if (sequence)
             {
-                int32 n = 0;
-                do
+                for (int32 n = 0; sequence->ucs == c; ++n)
                 {
-                    const int32 v = VerifyWidth(c, sequences, n);
+                    const int32 v = VerifyWidth(sequence);
                     if (v < 0)
                     {
-                        fprintf(stderr, "INTERNAL FAILURE:  unable to verify sequence %d for 0x%04X.\n", n, uint32(c));
+                        fprintf(stderr, "INTERNAL FAILURE:  unable to verify sequence #%d for %04X.\n", n, uint32(c));
                         return 1;
                     }
 
@@ -620,16 +634,15 @@ int main(int argc, char** argv)
                     }
 
                     ++tested;
-                    ++n;
+                    ++sequence;
                 }
-                while (sequences = next_emoji_form_sequence(sequences));
             }
             else
             {
                 verified = VerifyWidth(c, wcwidth(c));
                 if (verified < 0)
                 {
-                    fprintf(stderr, "INTERNAL FAILURE:  unable to verify 0x%04X.\n", uint32(c));
+                    fprintf(stderr, "INTERNAL FAILURE:  unable to verify %04X.\n", uint32(c));
                     return 1;
                 }
 

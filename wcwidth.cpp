@@ -129,39 +129,29 @@ static int32 bisearch(char32_t ucs, const struct interval *table, int32 max) {
   return 0;
 }
 
-struct emoji_form_sequences {
-  char32_t ucs;
-  const char* sequences;
-};
-
 #include "emoji-test.i"
 #include "assigned-codepoints.i"
 
-const char* get_emoji_form_sequences(char32_t ucs) {
+const emoji_form_sequence* get_emoji_form_sequence(char32_t ucs) {
   int32 min = 0;
-  int32 max = _countof(emoji_forms) - 1;
+  int32 max = _countof(emoji_forms);
   int32 mid;
 
-  while (max >= min) {
+  while (max > min) {
     mid = (min + max) / 2;
     if (ucs > emoji_forms[mid].ucs)
       min = mid + 1;
-    else if (ucs < emoji_forms[mid].ucs)
-      max = mid - 1;
     else
-      return emoji_forms[mid].sequences;
+      max = mid;
+  }
+  if (max == min && min < _countof(emoji_forms)) {
+    assert(min < 1 || emoji_forms[min - 1].ucs < ucs);
+    const emoji_form_sequence* x = emoji_forms + min;
+    if (x->ucs == ucs)
+      return x;
   }
 
   return nullptr;
-}
-
-const char* next_emoji_form_sequence(const char* sequences) {
-  if (!*sequences)
-    return nullptr;
-  while (*sequences)
-    ++sequences;
-  ++sequences;
-  return sequences;
 }
 
 const char* is_assigned(char32_t ucs) {
@@ -205,6 +195,7 @@ bool is_ideograph(char32_t ucs) {
 bool is_kana(char32_t ucs) {
   static const struct interval kana[] = {
     { 0x1100, 0x115f },     // Hangul Jamo (various characters)
+    { 0x302e, 0x302f },     // CJK Symbols and Punctuation (Hangul single/double dot tone marks)
     { 0xa960, 0xa97c },     // Hangul Jamo Extended-A (various characters)
     { 0x18800, 0x18aff },   // Tangut Components
     { 0x18b00, 0x18cff },   // Khitan Small Script
@@ -223,11 +214,12 @@ bool is_kana(char32_t ucs) {
 }
 
 static bool is_cjk_halfwidth(char32_t ucs) {
-  static const struct interval cjk_halfwidth[] = {
+  static const struct interval halfwidth_exceptions[] = {
     { 0x303f, 0x303f },     // Ideographic Half Fill Space
+    { 0x3248, 0x324f },     // Enclosed CJK Letters and Months (circle number on black square)
     { 0x4dc0, 0x4dff },     // Yijing Hexagram Symbols
   };
-  return !!bisearch(ucs, cjk_halfwidth, _countof(cjk_halfwidth) - 1);
+  return !!bisearch(ucs, halfwidth_exceptions, _countof(halfwidth_exceptions) - 1);
 }
 
 /* sorted list of non-overlapping intervals of non-spacing characters */
@@ -345,13 +337,13 @@ static int32 mk_wcwidth(char32_t ucs)
   if (ucs < 0x1100 || !g_full_width_available)
     return 1;
   if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
-    return 2;                                 // (but wcwidth expected 1)
+    return 2;                                   // (but wcwidth expected 1)
   if (ucs == 0x2329 || ucs == 0x232a)
-    return 1;
+    return 2;
   if (ucs >= 0x2e80 && ucs <= 0xa4cf)
-    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+    return 1 + !is_cjk_halfwidth(ucs);          // (but wcwidth expected 2)
   if (ucs >= 0xac00 && ucs <= 0xd7a3)     /* Hangul Syllables */
-    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+    return 1 + !is_cjk_halfwidth(ucs);          // (but wcwidth expected 2)
   if ((ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
       (ucs >= 0xfe30 && ucs <= 0xfe6f) || /* CJK Compatibility Forms */
@@ -393,13 +385,13 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
   if (ucs < 0x1100 || !g_full_width_available)
     return 1;
   if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
-    return 2;                                 // (but wcwidth expected 1)
+    return 2;                                   // (but wcwidth expected 1)
   if (ucs == 0x2329 || ucs == 0x232a)
-    return 1;
+    return 2;
   if (ucs >= 0x2e80 && ucs <= 0xa4cf)
-    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+    return 1 + !is_cjk_halfwidth(ucs);          // (but wcwidth expected 2)
   if (ucs >= 0xac00 && ucs <= 0xd7a3)     /* Hangul Syllables */
-    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+    return 1 + !is_cjk_halfwidth(ucs);          // (but wcwidth expected 2)
   if ((ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
       (ucs >= 0xfe30 && ucs <= 0xfe6f) || /* CJK Compatibility Forms */
