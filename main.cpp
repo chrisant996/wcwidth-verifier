@@ -1,7 +1,7 @@
-#include <windows.h>
-#include <stdio.h>
-#include <vector>
+#include "main.h"
 #include "wcwidth.h"
+
+#include <locale.h>
 
 static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
 static char32_t s_prefix = '\0';
@@ -10,6 +10,10 @@ static bool s_verbose = false;
 static bool s_combining_marks_zero = false;
 static bool s_group_headers = true;
 static bool s_show_width = false;
+static bool s_only_ucs2 = false;
+
+bool g_full_width_available = true;
+bool g_color_emoji = false;
 
 #include "unicode-blocks.i"
 
@@ -45,7 +49,7 @@ private:
     WORD m_length;
 };
 
-static int VerifyWidth(char32_t ucs, const int expected_width)
+static int32 VerifyWidth(char32_t ucs, const int32 expected_width)
 {
     utf16fromutf32 s(ucs);
 
@@ -97,7 +101,7 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
         suffix_effect = (csbiAfter2.dwCursorPosition.X != csbiBefore.dwCursorPosition.X + width + 1);
     }
 
-    const int ok = (width == wcwidth(ucs)) && !suffix_effect;
+    const int32 ok = (width == wcwidth(ucs)) && !suffix_effect;
 
     if (!s_show_width && (ok || !s_verbose))
     {
@@ -107,7 +111,84 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
     }
     else
     {
-        printf("%s   0x%04X, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (unsigned int)ucs, width, expected_width);
+        printf("%s   0x%04X, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (uint32)ucs, width, expected_width);
+        const char* desc = is_assigned(ucs);
+        if (desc && *desc)
+            printf("    %s", desc);
+        puts("");
+        if (suffix_effect)
+            printf("        WARNING:  Suffix codepoint affected the width after measurement!\n");
+    }
+
+    return ok;
+}
+
+static int32 VerifyWidth(char32_t ucs, const char* sequence, int32 index)
+{
+    wchar_t s[64];
+    MultiByteToWideChar(CP_UTF8, 0, sequence, -1, s, _countof(s));
+
+    DWORD written = 0;
+    CONSOLE_SCREEN_BUFFER_INFO csbiBefore;
+    if (!GetConsoleScreenBufferInfo(s_hout, &csbiBefore))
+        return -1;
+    if (csbiBefore.dwCursorPosition.X != 0)
+        return -1;
+
+    if (s_prefix)
+    {
+        utf16fromutf32 pre(s_prefix);
+        if (!WriteConsoleW(s_hout, pre.c_str(), pre.length(), &written, nullptr))
+            return -1;
+        if (written != pre.length())
+            return -1;
+        if (!GetConsoleScreenBufferInfo(s_hout, &csbiBefore))
+            return -1;
+    }
+
+    const uint32 s_len = uint32(wcslen(s));
+    if (!WriteConsoleW(s_hout, s, s_len, &written, nullptr))
+        return -1;
+    if (written != s_len)
+        return -1;
+
+    CONSOLE_SCREEN_BUFFER_INFO csbiAfter1;
+    if (!GetConsoleScreenBufferInfo(s_hout, &csbiAfter1))
+        return -1;
+    if (csbiAfter1.dwCursorPosition.Y != csbiBefore.dwCursorPosition.Y)
+        return -1;
+
+    const SHORT width = csbiAfter1.dwCursorPosition.X - csbiBefore.dwCursorPosition.X;
+    if (width < 0 || width > 2)
+        return -1;
+
+    bool suffix_effect = false;
+    if (s_suffix)
+    {
+        utf16fromutf32 suf(s_suffix);
+        if (!WriteConsoleW(s_hout, suf.c_str(), suf.length(), &written, nullptr))
+            return -1;
+        if (written != suf.length())
+            return -1;
+
+        CONSOLE_SCREEN_BUFFER_INFO csbiAfter2;
+        if (!GetConsoleScreenBufferInfo(s_hout, &csbiAfter2))
+            return -1;
+        suffix_effect = (csbiAfter2.dwCursorPosition.X != csbiBefore.dwCursorPosition.X + width + 1);
+    }
+
+    const int32 expected_width = wcswidth(sequence, uint32(strlen(sequence)));
+    const int32 ok = (width == expected_width) && !suffix_effect;
+
+    if (!s_show_width && (ok || !s_verbose))
+    {
+        SetConsoleCursorPosition(s_hout, csbiBefore.dwCursorPosition);
+        WriteConsoleW(s_hout, L"        ", 8, &written, nullptr);
+        SetConsoleCursorPosition(s_hout, csbiBefore.dwCursorPosition);
+    }
+    else
+    {
+        printf("%s   0x%04X sequence %d, width %u, expected %u", (s_suffix == ' ') ? "" : " ", (uint32)ucs, index, width, expected_width);
         const char* desc = is_assigned(ucs);
         if (desc && *desc)
             printf("    %s", desc);
@@ -121,17 +202,19 @@ static int VerifyWidth(char32_t ucs, const int expected_width)
 
 static bool s_skip_all = false;
 static bool s_skip_combining = false;
-static bool s_skip_color_emoji = false;
+static bool s_skip_emoji = false;
 static bool s_skip_eaa = false;
 static bool s_skip_ideographs = true;
+static bool s_skip_kana = true;
 
 static void SetSkipAll(bool skip)
 {
     s_skip_all = skip;
     s_skip_combining = skip;
-    s_skip_color_emoji = skip;
+    s_skip_emoji = skip;
     s_skip_eaa = skip;
     s_skip_ideographs = skip;
+    s_skip_kana = skip;
 }
 
 static bool IsSkip(char32_t c)
@@ -140,11 +223,13 @@ static bool IsSkip(char32_t c)
     {
         if (!s_skip_combining && is_combining(c))
             return false;
-        if (!s_skip_color_emoji && is_color_emoji(c))
+        if (!s_skip_emoji && is_emoji(c))
             return false;
         if (!s_skip_eaa && is_east_asian_ambiguous(c))
             return false;
         if (!s_skip_ideographs && is_ideograph(c))
+            return false;
+        if (!s_skip_kana && is_kana(c))
             return false;
         return true;
     }
@@ -152,11 +237,13 @@ static bool IsSkip(char32_t c)
     {
         if (s_skip_combining && is_combining(c))
             return true;
-        if (s_skip_color_emoji && is_color_emoji(c))
+        if (s_skip_emoji && is_emoji(c))
             return true;
         if (s_skip_eaa && is_east_asian_ambiguous(c))
             return true;
         if (s_skip_ideographs && is_ideograph(c))
+            return true;
+        if (s_skip_ideographs && is_kana(c))
             return true;
         return false;
     }
@@ -171,7 +258,7 @@ struct interval
 static bool ParseCodepoint(const char* arg, interval& range, bool end_range=false)
 {
     char* end;
-    int radix = 10;
+    int32 radix = 10;
 
     if (arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X'))
     {
@@ -215,11 +302,11 @@ struct option_definition
     void*           value;
 };
 
-static bool parse_options(int& argc, char**& argv, const option_definition* options)
+static bool parse_options(int32& argc, char**& argv, const option_definition* options)
 {
-    int keep_argc = 0;
+    int32 keep_argc = 0;
 
-    for (int i = 0; i < argc; ++i)
+    for (int32 i = 0; i < argc; ++i)
     {
         if (argv[i][0] != '-' || argv[i][1] != '-')
         {
@@ -291,12 +378,13 @@ static const option_definition c_options[] =
     { "suffix",                 option_type::codepoint,   &s_suffix },
     { "color-emoji",            option_type::boolean,     &g_color_emoji },
     { "full-width",             option_type::boolean,     &g_full_width_available },
-    { "only-ucs2",              option_type::boolean,     &g_only_ucs2 },
+    { "only-ucs2",              option_type::boolean,     &s_only_ucs2 },
     { "group-headers",          option_type::boolean,     &s_group_headers },
     { "skip-combining",         option_type::boolean,     &s_skip_combining },
-    { "skip-color-emoji",       option_type::boolean,     &s_skip_color_emoji },
+    { "skip-emoji",             option_type::boolean,     &s_skip_emoji },
     { "skip-eaa",               option_type::boolean,     &s_skip_eaa },
     { "skip-ideographs",        option_type::boolean,     &s_skip_ideographs },
+    { "skip-kana",              option_type::boolean,     &s_skip_kana },
     { "skip-all",               option_type::boolean,     &s_skip_all },
     { "combining-marks-zero",   option_type::boolean,     &s_combining_marks_zero },
     { "show-width",             option_type::boolean,     &s_show_width },
@@ -313,6 +401,9 @@ int main(int argc, char** argv)
         fputs("This test tool is not compatible with redirected output.\n", stderr);
         return 1;
     }
+
+    detect_ucs2_limitation();
+    g_color_emoji = !!getenv("WT_SESSION");
 
     if (!parse_options(argc, argv, c_options))
     {
@@ -339,9 +430,10 @@ int main(int argc, char** argv)
         "  --group-headers       Shows names of groups of codepoints (default).\n"
         "  --show-width          Shows expected and actual width for each character.\n"
         "  --skip-combining      Skip testing combining marks.\n"
-        "  --skip-color-emoji    Skip testing color emoji.\n"
+        "  --skip-emoji          Skip testing emojis.\n"
         "  --skip-eaa            Skip testing East Asian Ambiguous characters.\n"
         "  --skip-ideographs     Skip testing ideograph ranges (default).\n"
+        "  --skip-kana           Skip testing various kana ranges (default).\n"
         "  --skip-all            Skip testing all ranges (use --no-skip-whatever to add\n"
         "                        back specific ranges).\n"
         "\n"
@@ -363,13 +455,15 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    g_combining_marks_wcwidth = (s_combining_marks_zero ? 0 : 1);
+    setlocale(LC_ALL, ".utf8");
+
+    combining_mark_width_scope cmwidth(s_combining_marks_zero ? 0 : 1);
 
     std::vector<block_range> manual_ranges;
 
     if (argc)
     {
-        for (int i = 0; i < argc; ++i)
+        for (int32 i = 0; i < argc; ++i)
         {
             if (argv[0][0] < '0' || argv[0][0] > '9')
             {
@@ -428,8 +522,8 @@ int main(int argc, char** argv)
     const block_range* const ranges = manual_ranges.empty() ? c_blocks : &manual_ranges.front();
     const DWORD began = GetTickCount();
 
-    unsigned int tested = 0;
-    unsigned int failed = 0;
+    uint32 tested = 0;
+    uint32 failed = 0;
 
     for (const block_range* range = ranges; range->first; ++range)
     {
@@ -448,11 +542,11 @@ int main(int argc, char** argv)
             // SetConsoleTextAttribute(s_hout, csbi.wAttributes | 0xF);
 
             if (range->first == range->last)
-                printf("CODEPOINT 0x%04X", (unsigned int)range->first);
+                printf("CODEPOINT 0x%04X", uint32(range->first));
             else if (range->desc)
-                printf("0x%04X .. 0x%04X -- %s", (unsigned int)range->first, (unsigned int)range->last, range->desc);
+                printf("0x%04X .. 0x%04X -- %s", uint32(range->first), uint32(range->last), range->desc);
             else
-                printf("0x%04X .. 0x%04X", (unsigned int)range->first, (unsigned int)range->last);
+                printf("0x%04X .. 0x%04X", uint32(range->first), uint32(range->last));
 
             // SetConsoleTextAttribute(s_hout, csbi.wAttributes);
             puts("");
@@ -466,7 +560,7 @@ int main(int argc, char** argv)
                 GetConsoleScreenBufferInfo(herr, &csbi);
                 SetConsoleTextAttribute(herr, (csbi.wAttributes & 0xF0) | 0x0C);
 
-                fprintf(stderr, "FAILED:  0x%04X..0x%04X do not match the expected width (%u codepoints).", (unsigned int)first_failure, (unsigned int)last_failure, (unsigned int)(last_failure + 1 - first_failure));
+                fprintf(stderr, "FAILED:  0x%04X..0x%04X do not match the expected width (%u codepoints).", uint32(first_failure), uint32(last_failure), uint32(last_failure + 1 - first_failure));
 
                 SetConsoleTextAttribute(herr, csbi.wAttributes);
                 fputs("\n", stderr);
@@ -495,33 +589,63 @@ int main(int argc, char** argv)
             // if (!prev || (prev >> 12) != (c >> 12))
             // {
             //     if (!prev)
-            //         printf("0x%04X ...\n", (unsigned int)c);
+            //         printf("0x%04X ...\n", uint32(c));
             //     prev = c;
             // }
 
             if (!assigned && single_codepoint)
-                printf("NOTE:  0x%04X is not an assigned codepoint.\n", (unsigned int)c);
+                printf("NOTE:  0x%04X is not an assigned codepoint.\n", uint32(c));
 
-            const int verified = VerifyWidth(c, wcwidth(c));
-            if (verified < 0)
+            int32 verified = true;
+            const char* sequences = get_emoji_form_sequences(c);
+            if (sequences)
             {
-                fprintf(stderr, "INTERNAL FAILURE:  unable to verify 0x%04X.\n", (unsigned int)c);
-                return 1;
-            }
+                int32 n = 0;
+                do
+                {
+                    const int32 v = VerifyWidth(c, sequences, n);
+                    if (v < 0)
+                    {
+                        fprintf(stderr, "INTERNAL FAILURE:  unable to verify sequence %d for 0x%04X.\n", n, uint32(c));
+                        return 1;
+                    }
 
-            if (!verified)
-            {
-                ++failed;
-                if (!first_failure)
-                    first_failure = c;
-                last_failure = c;
+                    if (!v)
+                    {
+                        ++failed;
+                        if (!first_failure)
+                            first_failure = c;
+                        last_failure = c;
+                        verified = false;
+                    }
+
+                    ++tested;
+                    ++n;
+                }
+                while (sequences = next_emoji_form_sequence(sequences));
             }
             else
             {
-                maybe_report_failure_range();
+                verified = VerifyWidth(c, wcwidth(c));
+                if (verified < 0)
+                {
+                    fprintf(stderr, "INTERNAL FAILURE:  unable to verify 0x%04X.\n", uint32(c));
+                    return 1;
+                }
+
+                if (!verified)
+                {
+                    ++failed;
+                    if (!first_failure)
+                        first_failure = c;
+                    last_failure = c;
+                }
+
+                ++tested;
             }
 
-            ++tested;
+            if (verified)
+                maybe_report_failure_range();
         }
 
         maybe_report_failure_range();

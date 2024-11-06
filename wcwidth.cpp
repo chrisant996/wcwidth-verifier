@@ -65,24 +65,44 @@
  *
  */
 
-#include <stdlib.h>
-#include <windows.h>
-#include <wchar.h>
+#include "main.h"
+#include "wcwidth.h"
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
+static int32 s_combining_mark_width = 0;
+static bool s_only_ucs2 = false;
 
-int g_combining_marks_wcwidth = 0;
-
-int g_full_width_available = 1;
-int g_color_emoji = 1;
-int g_only_ucs2 = 0;
-
-static int resolve_ambiguous_wcwidth(char32_t ucs)
+combining_mark_width_scope::combining_mark_width_scope(int32 width)
+: m_old(s_combining_mark_width)
 {
-  return 2;
+    s_combining_mark_width = width;
 }
+
+combining_mark_width_scope::~combining_mark_width_scope()
+{
+    s_combining_mark_width = m_old;
+}
+
+void detect_ucs2_limitation(bool force)
+{
+    static bool s_inited_only_ucs2 = false;
+    if (force)
+    {
+        s_only_ucs2 = true;
+        s_inited_only_ucs2 = true;
+    }
+    else if (!s_inited_only_ucs2)
+    {
+#pragma warning(push)
+#pragma warning(disable:4996)
+        OSVERSIONINFO ver = { sizeof(ver) };
+        if (GetVersionEx(&ver))
+            s_only_ucs2 = (ver.dwMajorVersion < 10);
+        s_inited_only_ucs2 = true;
+    }
+#pragma warning(pop)
+}
+
+static int32 resolve_ambiguous_wcwidth(char32_t ucs);
 
 struct interval {
   char32_t first;
@@ -90,9 +110,9 @@ struct interval {
 };
 
 /* auxiliary function for binary search in interval table */
-static int bisearch(char32_t ucs, const struct interval *table, int max) {
-  int min = 0;
-  int mid;
+static int32 bisearch(char32_t ucs, const struct interval *table, int32 max) {
+  int32 min = 0;
+  int32 mid;
 
   if (ucs < table[0].first || ucs > table[max].last)
     return 0;
@@ -109,14 +129,46 @@ static int bisearch(char32_t ucs, const struct interval *table, int max) {
   return 0;
 }
 
+struct emoji_form_sequences {
+  char32_t ucs;
+  const char* sequences;
+};
+
 #include "emoji-test.i"
 #include "assigned-codepoints.i"
 
+const char* get_emoji_form_sequences(char32_t ucs) {
+  int32 min = 0;
+  int32 max = _countof(emoji_forms) - 1;
+  int32 mid;
+
+  while (max >= min) {
+    mid = (min + max) / 2;
+    if (ucs > emoji_forms[mid].ucs)
+      min = mid + 1;
+    else if (ucs < emoji_forms[mid].ucs)
+      max = mid - 1;
+    else
+      return emoji_forms[mid].sequences;
+  }
+
+  return nullptr;
+}
+
+const char* next_emoji_form_sequence(const char* sequences) {
+  if (!*sequences)
+    return nullptr;
+  while (*sequences)
+    ++sequences;
+  ++sequences;
+  return sequences;
+}
+
 const char* is_assigned(char32_t ucs) {
   const struct codepoint* table = c_assigned;
-  int min = 0;
-  int max = _countof(c_assigned) - 1;
-  int mid;
+  int32 min = 0;
+  int32 max = _countof(c_assigned) - 1;
+  int32 mid;
 
   while (max >= min) {
     mid = (min + max) / 2;
@@ -145,9 +197,37 @@ const char* is_assigned(char32_t ucs) {
   return 0;
 }
 
-int is_ideograph(char32_t ucs) {
+bool is_ideograph(char32_t ucs) {
   const char* name = is_assigned(ucs);
   return name && strstr(name, "Ideograph");
+}
+
+bool is_kana(char32_t ucs) {
+  static const struct interval kana[] = {
+    { 0x1100, 0x115f },     // Hangul Jamo (various characters)
+    { 0xa960, 0xa97c },     // Hangul Jamo Extended-A (various characters)
+    { 0x18800, 0x18aff },   // Tangut Components
+    { 0x18b00, 0x18cff },   // Khitan Small Script
+    { 0x1aff0, 0x1aff3 },   // Kana Extended-B (various tones)
+    { 0x1aff5, 0x1affb },   // Kana Extended-B (various tones)
+    { 0x1affd, 0x1affe },   // Kana Extended-B (various tones)
+    { 0x1b000, 0x1b0ff },   // Kana Supplement
+    { 0x1b100, 0x1b122 },   // Kana Extended-A
+    { 0x1b132, 0x1b132 },   // Small Kana Extension (various letters)
+    { 0x1b150, 0x1b152 },   // Small Kana Extension (various letters)
+    { 0x1b155, 0x1b155 },   // Small Kana Extension (various letters)
+    { 0x1b164, 0x1b167 },   // Small Kana Extension (various letters)
+    { 0x1b170, 0x1b2ff },   // Nushu
+  };
+  return !!bisearch(ucs, kana, _countof(kana) - 1);
+}
+
+static bool is_cjk_halfwidth(char32_t ucs) {
+  static const struct interval cjk_halfwidth[] = {
+    { 0x303f, 0x303f },     // Ideographic Half Fill Space
+    { 0x4dc0, 0x4dff },     // Yijing Hexagram Symbols
+  };
+  return !!bisearch(ucs, cjk_halfwidth, _countof(cjk_halfwidth) - 1);
 }
 
 /* sorted list of non-overlapping intervals of non-spacing characters */
@@ -199,19 +279,9 @@ static const struct interval combining[] = {
   { 0x10A01, 0x10A03 }, { 0x10A05, 0x10A06 }, { 0x10A0C, 0x10A0F },
   { 0x10A38, 0x10A3A }, { 0x10A3F, 0x10A3F }, { 0x1D167, 0x1D169 },
   { 0x1D173, 0x1D182 }, { 0x1D185, 0x1D18B }, { 0x1D1AA, 0x1D1AD },
-  { 0x1D242, 0x1D244 }, { 0xE0001, 0xE0001 }, { 0xE0020, 0xE007F },
-  { 0xE0100, 0xE01EF }
+  { 0x1D242, 0x1D244 }, { 0x1F3FB, 0x1F3FF }, { 0xE0001, 0xE0001 },
+  { 0xE0020, 0xE007F }, { 0xE0100, 0xE01EF }
 };
-
-int is_combining(char32_t ucs)
-{
-  return bisearch(ucs, combining, _countof(combining) - 1);
-}
-
-int is_color_emoji(char32_t ucs)
-{
-  return bisearch(ucs, emojis, _countof(emojis) - 1);
-}
 
 /* The following two functions define the column width of an ISO 10646
  * character as follows:
@@ -245,7 +315,7 @@ int is_color_emoji(char32_t ucs)
  * in ISO 10646.
  */
 
-static int mk_wcwidth(char32_t ucs)
+static int32 mk_wcwidth(char32_t ucs)
 {
   /* test for 8-bit control characters */
   if (ucs == 0)
@@ -257,35 +327,106 @@ static int mk_wcwidth(char32_t ucs)
   if (ucs < 0xa0)
     return -1;
 
-  if (g_only_ucs2 && ucs >= 0x10000)
-    return 2;
-
-  /* special processing for color emoji */
-  if (g_color_emoji &&
-      bisearch(ucs, emojis, _countof(emojis) - 1))
-    return 2;
+  /* special processing when color emoji support is enabled */
+  if (g_color_emoji) {
+    /* characters with unqualified forms are width 1 without FE0F/etc */
+    if (bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1))
+      return 1;
+    /* color emoji are width 2 */
+    if (bisearch(ucs, emojis, _countof(emojis) - 1))
+      return 2;
+  }
 
   /* binary search in table of non-spacing characters */
   if (bisearch(ucs, combining, _countof(combining) - 1))
-    return g_combining_marks_wcwidth;
+    return s_combining_mark_width;
 
   /* if we arrive here, ucs is not a combining or C0/C1 control character */
-  return 1 +
-    (ucs >= 0x1100 &&
-     g_full_width_available &&
-     (ucs <= 0x115f ||                    /* Hangul Jamo init. consonants */
-      ucs == 0x2329 || ucs == 0x232a ||
-      (ucs >= 0x2e80 && ucs <= 0xa4cf &&
-       ucs != 0x303f) ||                  /* CJK ... Yi */
-      (ucs >= 0xac00 && ucs <= 0xd7a3) || /* Hangul Syllables */
-      (ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
+  if (ucs < 0x1100 || !g_full_width_available)
+    return 1;
+  if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
+    return 2;                                 // (but wcwidth expected 1)
+  if (ucs == 0x2329 || ucs == 0x232a)
+    return 1;
+  if (ucs >= 0x2e80 && ucs <= 0xa4cf)
+    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+  if (ucs >= 0xac00 && ucs <= 0xd7a3)     /* Hangul Syllables */
+    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+  if ((ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
       (ucs >= 0xfe30 && ucs <= 0xfe6f) || /* CJK Compatibility Forms */
       (ucs >= 0xff00 && ucs <= 0xff60) || /* Fullwidth Forms */
       (ucs >= 0xffe0 && ucs <= 0xffe6) ||
       (ucs >= 0x20000 && ucs <= 0x2fffd) ||
-      (ucs >= 0x30000 && ucs <= 0x3fffd)));
+      (ucs >= 0x30000 && ucs <= 0x3fffd))
+    return 2;
+  return 1;
 }
+
+static int32 mk_wcwidth_ucs2(char32_t ucs)
+{
+  /* test for 8-bit control characters */
+  if (ucs == 0)
+    return 0;
+  if (ucs < 32)
+    return -1;
+  if (ucs <= 0x7e)
+    return 1;
+  if (ucs < 0xa0)
+    return -1;
+
+  /* special processing when color emoji support is enabled */
+  if (g_color_emoji) {
+    /* characters with unqualified forms are width 1 without FE0F/etc */
+    if (bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1))
+      return 1;
+    /* color emoji are width 2 */
+    if (bisearch(ucs, emojis, _countof(emojis) - 1))
+      return 2;
+  }
+
+  /* binary search in table of non-spacing characters */
+  if (bisearch(ucs, combining, _countof(combining) - 1))
+    return s_combining_mark_width;
+
+  /* if we arrive here, ucs is not a combining or C0/C1 control character */
+  if (ucs < 0x1100 || !g_full_width_available)
+    return 1;
+  if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
+    return 2;                                 // (but wcwidth expected 1)
+  if (ucs == 0x2329 || ucs == 0x232a)
+    return 1;
+  if (ucs >= 0x2e80 && ucs <= 0xa4cf)
+    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+  if (ucs >= 0xac00 && ucs <= 0xd7a3)     /* Hangul Syllables */
+    return 1 + !is_cjk_halfwidth(ucs);        // (but wcwidth expected always 2)
+  if ((ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
+      (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
+      (ucs >= 0xfe30 && ucs <= 0xfe6f) || /* CJK Compatibility Forms */
+                                          /* ...ignore Fullwidth Forms... */
+      (ucs >= 0x10000))                   /* UCS2 on Windows 8.1 and lower */
+    return 2;
+  return 1;
+}
+
+
+// Use wcswidth() or wcwidth_iter instead:  they handle fully qualified color
+// emoji, which requires sometimes looking at MULTIPLE codepoints to determine
+// the width.
+#if 0
+static int32 mk_wcswidth(const char32_t *pwcs, size_t n)
+{
+  int32 w, width = 0;
+
+  for (;*pwcs && n-- > 0; pwcs++)
+    if ((w = mk_wcwidth(*pwcs)) < 0)
+      return -1;
+    else
+      width += w;
+
+  return width;
+}
+#endif
 
 
 /* sorted list of non-overlapping intervals of East Asian Ambiguous
@@ -345,9 +486,9 @@ static const struct interval ambiguous[] = {
   { 0xFFFD, 0xFFFD }, { 0xF0000, 0xFFFFD }, { 0x100000, 0x10FFFD }
 };
 
-int is_east_asian_ambiguous(char32_t ucs)
+bool is_east_asian_ambiguous(char32_t ucs)
 {
-  return bisearch(ucs, ambiguous, _countof(ambiguous) - 1);
+  return !!bisearch(ucs, ambiguous, _countof(ambiguous) - 1);
 }
 
 /*
@@ -359,7 +500,7 @@ int is_east_asian_ambiguous(char32_t ucs)
  * the traditional terminal character-width behaviour. It is not
  * otherwise recommended for general use.
  */
-static int mk_wcwidth_cjk(char32_t ucs)
+static int32 mk_wcwidth_cjk(char32_t ucs)
 {
   /* binary search in table of ambiguous width chars in CJK codepages */
   if (bisearch(ucs, ambiguous, _countof(ambiguous) - 1))
@@ -368,44 +509,91 @@ static int mk_wcwidth_cjk(char32_t ucs)
   return mk_wcwidth(ucs);
 }
 
-int is_CJK_codepage(UINT cp)
+static int32 mk_wcwidth_cjk_ucs2(char32_t ucs)
 {
-    return (cp == 932 || cp == 936 || cp == 949 || cp == 950);
-}
+  /* binary search in table of ambiguous width chars in CJK codepages */
+  if (bisearch(ucs, ambiguous, _countof(ambiguous) - 1))
+    return resolve_ambiguous_wcwidth(ucs);
 
-int test_ambiguous_width_char(char32_t ucs, char32_t* peek, unsigned int peek_len)
-{
-    UINT cp = GetConsoleOutputCP();
-    if (is_CJK_codepage(cp))
-    {
-        if (bisearch(ucs, ambiguous, _countof(ambiguous) - 1))
-            return 1; // CJK ambiguous width char.
-    }
-
-    if (bisearch(ucs, emojis, _countof(emojis) - 1))
-        return 2; // Color emoji ambiguous width char.
-
-    if (bisearch(ucs, ambiguous_emojis, _countof(ambiguous_emojis) - 1))
-    {
-        if (peek && peek_len && *peek == 0xfe0f &&
-            bisearch(ucs, fully_qualified_double_width, _countof(fully_qualified_double_width) - 1))
-        {
-            return 4; // Color emoji ambiguous width char, fully qualified with 0xFE0F.
-        }
-        return 3; // Emoji whose width depends on surrounding characters.
-    }
-
-    return 0; // Char width is not known to be ambiguous (but still could be).
+  return mk_wcwidth_ucs2(ucs);
 }
 
 
 
 //------------------------------------------------------------------------------
-typedef int wcwidth_t (char32_t);
+typedef int32 wcwidth_t (char32_t);
 wcwidth_t *wcwidth = mk_wcwidth;
 
-#if defined(__cplusplus)
-} // extern "C"
+#if 0
+typedef int32 wcswidth_t (const char32_t*, size_t);
+wcswidth_t *wcswidth = mk_wcswidth;
 #endif
+
+/*
+ * This tests whether the input codepoint is a recognized emoji variant
+ * selector.
+ */
+bool is_variant_selector(char32_t ucs)
+{
+    assert(g_color_emoji);
+    return (ucs == 0xfe0f ||                            // color variant
+            ucs >= 0x1f3fb && ucs <= 0x1f3ff);          // skin tone
+}
+
+/*
+ * Windows Terminal renders some codepoints as half-width unless followed by
+ * codepoints that make them fully-qualified.  This is for consistency with
+ * behavior of the first few terminals that supported color emoji.
+ * https://github.com/microsoft/terminal/issues/17342#issuecomment-2199942912
+ */
+bool is_possible_unqualified_half_width(char32_t ucs)
+{
+    assert(g_color_emoji);
+    return !!bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1);
+}
+
+bool is_combining(char32_t ucs)
+{
+    return !!bisearch(ucs, combining, _countof(combining) - 1);
+}
+
+/*
+ * This tests whether the input codepoint is recognized as an emoji.
+ */
+bool is_emoji(char32_t ucs)
+{
+    assert(g_color_emoji);
+    return !!bisearch(ucs, emojis, _countof(emojis) - 1);
+}
+
+static int32 resolve_ambiguous_wcwidth(char32_t ucs)
+{
+    return 2;
+}
+
+int32 is_CJK_codepage(UINT cp)
+{
+    return (cp == 932 || cp == 936 || cp == 949 || cp == 950);
+}
+
+void reset_wcwidths()
+{
+    int32 use_cjk = true;
+
+    detect_ucs2_limitation();
+
+    static UINT s_cp = 0; // Static so that it's visible in heap dumps.
+    s_cp = GetConsoleOutputCP();
+    use_cjk = is_CJK_codepage(s_cp);
+
+    if (use_cjk)
+    {
+        wcwidth = s_only_ucs2 ? mk_wcwidth_cjk_ucs2 : mk_wcwidth_cjk;
+    }
+    else
+    {
+        wcwidth = s_only_ucs2 ? mk_wcwidth_ucs2 : mk_wcwidth;
+    }
+}
 
 // vim: ts=2 expandtab sw=2

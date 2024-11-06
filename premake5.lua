@@ -1,5 +1,7 @@
 local to = ".build/"..(_ACTION or "nullaction")
 
+local bit32 = require("numberlua").bit32
+
 --------------------------------------------------------------------------------
 workspace("wcwidth-verifier")
     configurations({"debug"})
@@ -29,7 +31,10 @@ workspace("wcwidth-verifier")
         kind("consoleapp")
         language("c++")
         --flags("OmitDefaultLibrary")
+        includedirs(".")
+        files("str_iter.cpp")
         files("wcwidth.cpp")
+        files("wcwidth_iter.cpp")
         files("main.cpp")
 
 --------------------------------------------------------------------------------
@@ -40,6 +45,34 @@ end
 --------------------------------------------------------------------------------
 local function to_symbol_cpp(text)
     return text:gsub("[^A-Za-z0-9_]", "_")
+end
+
+--------------------------------------------------------------------------------
+local function utf32to8(c)
+    if type(c) ~= "number" then
+        error(string.format("arg #1 unexpected type %s; expected number", type(c)))
+    elseif c < 0 then
+        error(string.format("arg #1 cannot be negative"))
+    elseif c <= 0x007f then
+        return string.format("\\x%02x", c)
+    elseif c <= 0x07ff then
+        local b2 = 0x80 + bit32.band(c, 0x3f)
+        local b1 = 0xc0 + bit32.band(bit32.rshift(c, 6), 0x1f)
+        return string.format("\\x%02x\\x%02x", b1, b2)
+    elseif c <= 0xffff then
+        local b3 = 0x80 + bit32.band(c, 0x3f)
+        local b2 = 0x80 + bit32.band(bit32.rshift(c, 6), 0x3f)
+        local b1 = 0xe0 + bit32.band(bit32.rshift(c, 12), 0x0f)
+        return string.format("\\x%02x\\x%02x\\x%02x", b1, b2, b3)
+    elseif c <= 0x10ffff then
+        local b4 = 0x80 + bit32.band(c, 0x3f)
+        local b3 = 0x80 + bit32.band(bit32.rshift(c, 6), 0x3f)
+        local b2 = 0x80 + bit32.band(bit32.rshift(c, 12), 0x3f)
+        local b1 = 0xf0 + bit32.band(bit32.rshift(c, 18), 0x07)
+        return string.format("\\x%02x\\x%02x\\x%02x\\x%02x", b1, b2, b3, b4)
+    else
+        error(string.format("arg #1 value 0x%x exceeds 0x10ffff", c))
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -54,7 +87,13 @@ local function load_indexed_emoji_table(file)
         if x then
             local d = tonumber(x, 16)
             if d then
-                indexed[d] = true
+                local t = indexed[d]
+                if not t then
+                    t = {}
+                    indexed[d] = t
+                end
+                local sequence = line:match("^([0-9A-Fa-f ]+)"):gsub("%w+$", "")
+                table.insert(t, sequence)
             end
         end
     end
@@ -63,7 +102,7 @@ end
 
 --------------------------------------------------------------------------------
 local function output_character_ranges(out, tag, indexed, filtered)
-
+    -- Declaration.
     out:write("\nstatic const struct interval " .. tag .. "[] = {\n\n")
 
     -- Build sorted array of characters.
@@ -101,6 +140,43 @@ local function output_character_ranges(out, tag, indexed, filtered)
 end
 
 --------------------------------------------------------------------------------
+local function output_emoji_forms(out, tag, indexed, possible_unqualified_half_width, filtered)
+    local forms = {}
+
+    forms[0xfe0f] = { "FE0F" }
+    forms[0x1f3fb] = { "1F3FB" }
+    forms[0x1f3fc] = { "1F3FC" }
+    forms[0x1f3fd] = { "1F3FD" }
+    forms[0x1f3fe] = { "1F3FE" }
+    forms[0x1f3ff] = { "1F3FF" }
+
+    for d, v in pairs(indexed) do
+        if not filtered[d] or possible_unqualified_half_width[d] then
+            forms[d] = v
+        end
+    end
+
+    forms[0x1f3f4] = nil    -- FUTURE: Windows Terminal doesn't support the E5.0 flag "subdivision-flag" sequences.
+
+    -- Declaration.
+    out:write("\nstatic const emoji_form_sequences " .. tag .. "[] = {\n\n")
+
+    for ucs, t in spairs(forms) do
+        local sequences = ""
+        for _, list in ipairs(t) do
+            local seq = {}
+            for x in string.gmatch(list, "[0-9A-Fa-f]+") do
+                table.insert(seq, utf32to8(tonumber(x, 16)))
+            end
+            sequences = sequences .. string.format("%s\\x00", table.concat(seq))
+        end
+        out:write(string.format("{ 0x%X, \"%s\" },\n", ucs, sequences))
+    end
+
+    out:write("\n};\n")
+end
+
+--------------------------------------------------------------------------------
 local function do_emojis()
     local out = "emoji-test.i"
 
@@ -123,7 +199,7 @@ local function do_emojis()
     -- Collect the emoji characters.
     local indexed = load_indexed_emoji_table(file)
     local filtered = load_indexed_emoji_table(filter)
-    local fully_qualified_double_width = load_indexed_emoji_table(fe0f)
+    local possible_unqualified_half_width = load_indexed_emoji_table(fe0f)
     file:close()
     filter:close()
     fe0f:close()
@@ -131,30 +207,15 @@ local function do_emojis()
     -- Output ranges of double-width emoji characters.
     local emojis, count_ranges = output_character_ranges(out, "emojis", indexed, filtered)
 
-    -- Output ranges of ambiguous emoji characters.
-    local ignored = {
-        [0x0023] = true,
-        [0x002A] = true,
-        [0x0030] = true,
-        [0x0031] = true,
-        [0x0032] = true,
-        [0x0033] = true,
-        [0x0034] = true,
-        [0x0035] = true,
-        [0x0036] = true,
-        [0x0037] = true,
-        [0x0038] = true,
-        [0x0039] = true,
-    }
-    local ambiguous = output_character_ranges(out, "ambiguous_emojis", filtered, ignored)
+    -- Output ranges of emoji characters which may be half-width if unqualified.
+    local half_width = output_character_ranges(out, "possible_unqualified_half_width", possible_unqualified_half_width, nil)
 
-    local double_width = output_character_ranges(out, "fully_qualified_double_width", fully_qualified_double_width, nil)
+    output_emoji_forms(out, "emoji_forms", indexed, possible_unqualified_half_width, filtered)
 
     out:close()
 
     print("   " .. #emojis .. " emojis; " .. count_ranges .. " ranges")
-    print("   " .. #ambiguous .. " ambiguous emojis")
-    print("   " .. #double_width .. " fully qualified double width emojis")
+    print("   " .. #half_width .. " possible unqualified half width emojis")
 end
 
 --------------------------------------------------------------------------------
