@@ -4,8 +4,6 @@
 #include "main.h"
 #include "wcwidth.h"
 
-extern bool g_only_ucs2;
-
 //------------------------------------------------------------------------------
 uint32 wcswidth(const char* s, uint32 len)
 {
