@@ -7,7 +7,6 @@ static HANDLE s_hout = GetStdHandle(STD_OUTPUT_HANDLE);
 static char32_t s_prefix = '\0';
 static char32_t s_suffix = ' ';
 static bool s_verbose = false;
-static bool s_combining_marks_zero = false;
 static bool s_group_headers = true;
 static bool s_show_width = false;
 static bool s_only_ucs2 = false;
@@ -50,9 +49,12 @@ private:
     WORD m_length;
 };
 
-static int32 VerifyWidth(char32_t ucs, const int32 expected_width)
+static int32 VerifyWidth(char32_t ucs)
 {
     utf16fromutf32 s(ucs);
+    char utf8[64];
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, utf8, _countof(utf8), nullptr, nullptr);
+    const uint32 expected_width = wcswidth(utf8, uint32(strlen(utf8)));
 
     DWORD written = 0;
     CONSOLE_SCREEN_BUFFER_INFO csbiBefore;
@@ -102,7 +104,7 @@ static int32 VerifyWidth(char32_t ucs, const int32 expected_width)
         suffix_effect = (csbiAfter2.dwCursorPosition.X != csbiBefore.dwCursorPosition.X + width + 1);
     }
 
-    const int32 ok = (width == wcwidth(ucs)) && !suffix_effect;
+    const int32 ok = (width == expected_width) && !suffix_effect;
 
     if (!s_show_width && (ok || !s_verbose))
     {
@@ -409,7 +411,6 @@ static const option_definition c_options[] =
     { "skip-ideographs",        option_type::boolean,     &s_skip_ideographs },
     { "skip-kana",              option_type::boolean,     &s_skip_kana },
     { "skip-all",               option_type::boolean,     &s_skip_all },
-    { "combining-marks-zero",   option_type::boolean,     &s_combining_marks_zero },
     { "show-width",             option_type::boolean,     &s_show_width },
     {}
 };
@@ -441,8 +442,8 @@ int main(int argc, char** argv)
         "  --suffix codepoint    Set codepoint for suffix character (default is U+20,\n"
         "                        which is the space character).\n"
         "\n"
-        "  NOTE:  prefix and suffix codepoints can be used to help analyze how combining\n"
-        "  characters affects grapheme widths.\n"
+        "  NOTE:  the --prefix and --suffix options are experimental, and can be used to\n"
+        "  help manually analyze how combining marks affect grapheme widths.\n"
         "\n"
         "On/off options:\n"
         "  --verbose             Verbose output; don't erase failed codepoints.\n"
@@ -450,7 +451,6 @@ int main(int argc, char** argv)
         "  --decimal             Use decimal for input numbers (default is hexadecimal).\n"
         "  --full-width          Assume Full Width characters are full width (default).\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
-        "  --combing-marks-zero  Assume Combining Marks are zero width.\n"
         "  --group-headers       Shows names of groups of codepoints (default).\n"
         "  --show-width          Shows expected and actual width for each character.\n"
         "  --skip-combining      Skip testing combining marks.\n"
@@ -484,8 +484,6 @@ int main(int argc, char** argv)
     g_color_emoji = !!getenv("WT_SESSION");
     s_only_ucs2 = detect_ucs2_limitation(s_only_ucs2 || !g_color_emoji);
     reset_wcwidths();
-
-    combining_mark_width_scope cmwidth(s_combining_marks_zero ? 0 : 1);
 
     std::vector<block_range> manual_ranges;
 
@@ -546,6 +544,14 @@ int main(int argc, char** argv)
         printf("\nAT END:  cursor X is %d\n", csbi2.dwCursorPosition.X);
     }
 #endif
+
+    if (s_verbose)
+    {
+        printf("only-ucs                = %d\n", s_only_ucs2);
+        printf("color-emoji             = %d\n", g_color_emoji);
+        printf("full-width              = %d\n", g_full_width_available);
+        printf("\n");
+    }
 
     const block_range* const ranges = manual_ranges.empty() ? c_blocks : &manual_ranges.front();
     const DWORD began = GetTickCount();
@@ -659,7 +665,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                verified = VerifyWidth(c, wcwidth(c));
+                verified = VerifyWidth(c);
                 if (verified < 0)
                 {
                     fprintf(stderr, "INTERNAL FAILURE:  unable to verify %04X.\n", uint32(c));

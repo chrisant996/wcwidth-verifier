@@ -70,6 +70,7 @@
 
 static int32 s_combining_mark_width = 0;
 static bool s_only_ucs2 = false;
+static bool s_win10 = false;
 static bool s_win11 = false;
 
 static int32 resolve_ambiguous_wcwidth(char32_t ucs);
@@ -370,10 +371,10 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
       (ucs >= 0xfe30 && ucs <= 0xfe6f))   /* CJK Compatibility Forms */
     return 2;
-  if (s_win11 &&                                // ignore unless >= Win11
-      (ucs >= 0xff00 && ucs <= 0xff60) || /* Fullwidth Forms */
-      (ucs >= 0xffe0 && ucs <= 0xffe6))
-    return 2;
+  if (ucs >= 0xff00 && ucs <= 0xff60)     /* Fullwidth Forms */
+    return s_win10 ? 2 : 1;
+  if (ucs >= 0xffe0 && ucs <= 0xffe6)     /* Fullwidth Forms */
+    return s_win11 ? 2 : 1;
   if (ucs >= 0x10000)                     /* UCS2 on Windows 8.1 and lower */
     return 2;
   return 1;
@@ -520,8 +521,9 @@ bool detect_ucs2_limitation(bool force)
         OSVERSIONINFO ver = { sizeof(ver) };
         if (GetVersionEx(&ver))
         {
-            s_only_ucs2 = (ver.dwMajorVersion < 10);
+            s_win10 = (ver.dwMajorVersion >= 10);
             s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
+            s_only_ucs2 = !s_win10;
         }
         s_inited_only_ucs2 = true;
     }
