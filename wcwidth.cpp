@@ -72,41 +72,6 @@ static int32 s_combining_mark_width = 0;
 static bool s_only_ucs2 = false;
 static bool s_win11 = false;
 
-combining_mark_width_scope::combining_mark_width_scope(int32 width)
-: m_old(s_combining_mark_width)
-{
-    s_combining_mark_width = width;
-}
-
-combining_mark_width_scope::~combining_mark_width_scope()
-{
-    s_combining_mark_width = m_old;
-}
-
-bool detect_ucs2_limitation(bool force)
-{
-    static bool s_inited_only_ucs2 = false;
-    if (!s_inited_only_ucs2)
-    {
-#pragma warning(push)
-#pragma warning(disable:4996)
-        OSVERSIONINFO ver = { sizeof(ver) };
-        if (GetVersionEx(&ver))
-        {
-            s_only_ucs2 = (ver.dwMajorVersion < 10);
-            s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
-        }
-        s_inited_only_ucs2 = true;
-    }
-    if (force)
-    {
-        s_only_ucs2 = true;
-        s_inited_only_ucs2 = true;
-    }
-#pragma warning(pop)
-    return s_only_ucs2;
-}
-
 static int32 resolve_ambiguous_wcwidth(char32_t ucs);
 
 struct interval {
@@ -533,6 +498,41 @@ wcwidth_t *wcwidth = mk_wcwidth;
 typedef int32 wcswidth_t (const char32_t*, size_t);
 wcswidth_t *wcswidth = mk_wcswidth;
 #endif
+
+combining_mark_width_scope::combining_mark_width_scope(int32 width)
+: m_old(s_combining_mark_width)
+{
+    s_combining_mark_width = width;
+}
+
+combining_mark_width_scope::~combining_mark_width_scope()
+{
+    s_combining_mark_width = m_old;
+}
+
+bool detect_ucs2_limitation(bool force)
+{
+    static bool s_inited_only_ucs2 = false;
+    if (!s_inited_only_ucs2)
+    {
+#pragma warning(push)
+#pragma warning(disable:4996)
+        OSVERSIONINFO ver = { sizeof(ver) };
+        if (GetVersionEx(&ver))
+        {
+            s_only_ucs2 = (ver.dwMajorVersion < 10);
+            s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
+        }
+        s_inited_only_ucs2 = true;
+    }
+    if (force)
+    {
+        s_only_ucs2 = true;
+        s_inited_only_ucs2 = true;
+    }
+#pragma warning(pop)
+    return s_only_ucs2;
+}
 
 /*
  * This tests whether the input codepoint is a recognized emoji variant
