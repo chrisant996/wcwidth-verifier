@@ -194,7 +194,7 @@ const char* is_assigned(char32_t ucs) {
 
 bool is_ideograph(char32_t ucs) {
   const char* name = is_assigned(ucs);
-  return name && strstr(name, "Ideograph");
+  return name && strstr(name, "IDEOGRAPH");
 }
 
 bool is_kana(char32_t ucs) {

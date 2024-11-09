@@ -253,7 +253,7 @@ static bool IsSkip(char32_t c)
             return true;
         if (s_skip_ideographs && is_ideograph(c))
             return true;
-        if (s_skip_ideographs && is_kana(c))
+        if (s_skip_kana && is_kana(c))
             return true;
         return false;
     }
