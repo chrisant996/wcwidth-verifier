@@ -371,10 +371,9 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
       (ucs >= 0xfe30 && ucs <= 0xfe6f))   /* CJK Compatibility Forms */
     return 2;
-  if (ucs >= 0xff00 && ucs <= 0xff60)     /* Fullwidth Forms */
+  if ((ucs >= 0xff00 && ucs <= 0xff60) || /* Fullwidth Forms */
+      (ucs >= 0xffe0 && ucs <= 0xffe6))
     return s_win10 ? 2 : 1;
-  if (ucs >= 0xffe0 && ucs <= 0xffe6)     /* Fullwidth Forms */
-    return s_win11 ? 2 : 1;
   if (ucs >= 0x10000)                     /* UCS2 on Windows 8.1 and lower */
     return 2;
   return 1;
