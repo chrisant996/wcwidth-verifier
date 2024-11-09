@@ -9,7 +9,7 @@
 typedef int32 wcwidth_t (char32_t);
 extern wcwidth_t *wcwidth;
 
-void detect_ucs2_limitation(bool force=false);
+bool detect_ucs2_limitation(bool force=false);
 void reset_wcwidths();
 bool is_east_asian_ambiguous(char32_t ucs);
 bool is_ideograph(char32_t ucs);

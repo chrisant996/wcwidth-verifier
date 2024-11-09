@@ -32,10 +32,12 @@ workspace("wcwidth-verifier")
         language("c++")
         --flags("OmitDefaultLibrary")
         includedirs(".")
+        includedirs(".build/vs2022/bin") -- for the generated manifest.xml
         files("str_iter.cpp")
         files("wcwidth.cpp")
         files("wcwidth_iter.cpp")
         files("main.cpp")
+        files("main.rc")
 
 --------------------------------------------------------------------------------
 local function escape_cpp(text)
@@ -73,6 +75,28 @@ local function utf32to8(c)
     else
         error(string.format("arg #1 value 0x%x exceeds 0x10ffff", c))
     end
+end
+
+--------------------------------------------------------------------------------
+local function parse_version_file()
+    local ver_file = io.open("version.h")
+    if not ver_file then
+        error("Failed to open version.h file")
+    end
+    local vmaj, vmin
+    for line in ver_file:lines() do
+        if not vmaj then
+            vmaj = line:match("VERSION_MAJOR%s+([^%s]+)")
+        end
+        if not vmin then
+            vmin = line:match("VERSION_MINOR%s+([^%s]+)")
+        end
+    end
+    ver_file:close()
+    if not (vmaj and vmin) then
+        error("Failed to get version info")
+    end
+    return vmaj .. "." .. vmin
 end
 
 --------------------------------------------------------------------------------
@@ -188,6 +212,7 @@ local function do_emojis()
     local file = io.open("unicode/emoji-test.txt", "r")
     local filter = io.open("unicode/emoji-filter.txt", "r")
     local fe0f = io.open("unicode/emoji-fe0f.txt", "r")
+    local mono = io.open("unicode/emoji-mono.txt", "r")
     out = io.open(out, "w")
 
     local header = {
@@ -203,12 +228,16 @@ local function do_emojis()
     local indexed = load_indexed_emoji_table(file)
     local filtered = load_indexed_emoji_table(filter)
     local possible_unqualified_half_width = load_indexed_emoji_table(fe0f)
+    local mono_emojis = load_indexed_emoji_table(mono)
     file:close()
     filter:close()
     fe0f:close()
 
     -- Output ranges of double-width emoji characters.
     local emojis, count_ranges = output_character_ranges(out, "emojis", indexed, filtered)
+
+    -- Output ranges of double-width monochrome emoji characters.
+    output_character_ranges(out, "mono_emojis", mono_emojis)
 
     -- Output ranges of emoji characters which may be half-width if unqualified.
     local half_width = output_character_ranges(out, "possible_unqualified_half_width", possible_unqualified_half_width, nil)
@@ -356,3 +385,35 @@ newaction {
         do_blocks()
     end
 }
+
+--------------------------------------------------------------------------------
+newaction {
+    trigger = "manifest",
+    description = "Generate app manifest for wcwidth-verifier",
+    execute = function ()
+        toolchain = _OPTIONS["vsver"] or "vs2022"
+        local outdir = path.getabsolute(".build/" .. toolchain .. "/bin").."/"
+
+        local version = parse_version_file()
+
+        local src = io.open("manifest_src.xml")
+        if not src then
+            error("Failed to open manifest_src.xml input file")
+        end
+        local dst = io.open(outdir .. "manifest.xml", "w")
+        if not dst then
+            error("Failed to open manifest.xml output file")
+        end
+
+        for line in src:lines("*L") do
+            line = line:gsub("%%VERSION%%", version)
+            dst:write(line)
+        end
+
+        src:close()
+        dst:close()
+
+        print("Generated manifest.xml in " .. outdir:gsub("/", "\\") .. ".")
+    end
+}
+

@@ -70,6 +70,7 @@
 
 static int32 s_combining_mark_width = 0;
 static bool s_only_ucs2 = false;
+static bool s_win11 = false;
 
 combining_mark_width_scope::combining_mark_width_scope(int32 width)
 : m_old(s_combining_mark_width)
@@ -82,24 +83,28 @@ combining_mark_width_scope::~combining_mark_width_scope()
     s_combining_mark_width = m_old;
 }
 
-void detect_ucs2_limitation(bool force)
+bool detect_ucs2_limitation(bool force)
 {
     static bool s_inited_only_ucs2 = false;
-    if (force)
-    {
-        s_only_ucs2 = true;
-        s_inited_only_ucs2 = true;
-    }
-    else if (!s_inited_only_ucs2)
+    if (!s_inited_only_ucs2)
     {
 #pragma warning(push)
 #pragma warning(disable:4996)
         OSVERSIONINFO ver = { sizeof(ver) };
         if (GetVersionEx(&ver))
+        {
             s_only_ucs2 = (ver.dwMajorVersion < 10);
+            s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
+        }
+        s_inited_only_ucs2 = true;
+    }
+    if (force)
+    {
+        s_only_ucs2 = true;
         s_inited_only_ucs2 = true;
     }
 #pragma warning(pop)
+    return s_only_ucs2;
 }
 
 static int32 resolve_ambiguous_wcwidth(char32_t ucs);
@@ -375,6 +380,10 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
     /* color emoji are width 2 */
     if (bisearch(ucs, emojis, _countof(emojis) - 1))
       return 2;
+  } else if (s_win11) {
+    /* Windows 11 conhost renders some emoji as full width monochrome glyphs */
+    if (bisearch(ucs, mono_emojis, _countof(mono_emojis) - 1))
+      return 2;
   }
 
   /* binary search in table of non-spacing characters */
@@ -394,9 +403,13 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
     return 1 + !is_cjk_halfwidth(ucs);          // (but wcwidth expected 2)
   if ((ucs >= 0xf900 && ucs <= 0xfaff) || /* CJK Compatibility Ideographs */
       (ucs >= 0xfe10 && ucs <= 0xfe19) || /* Vertical forms */
-      (ucs >= 0xfe30 && ucs <= 0xfe6f) || /* CJK Compatibility Forms */
-                                          /* ...ignore Fullwidth Forms... */
-      (ucs >= 0x10000))                   /* UCS2 on Windows 8.1 and lower */
+      (ucs >= 0xfe30 && ucs <= 0xfe6f))   /* CJK Compatibility Forms */
+    return 2;
+  if (s_win11 &&                                // ignore unless >= Win11
+      (ucs >= 0xff00 && ucs <= 0xff60) || /* Fullwidth Forms */
+      (ucs >= 0xffe0 && ucs <= 0xffe6))
+    return 2;
+  if (ucs >= 0x10000)                     /* UCS2 on Windows 8.1 and lower */
     return 2;
   return 1;
 }

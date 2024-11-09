@@ -259,6 +259,18 @@ static bool IsSkip(char32_t c)
     }
 }
 
+static bool IsSequenceSupported(const char* seq)
+{
+    if (s_only_ucs2)
+    {
+        if (strlen(seq) > 6)
+            return false;
+        if (strstr(seq, "\xef\xb8\x8f"))
+            return false;
+    }
+    return true;
+}
+
 struct interval
 {
     char32_t first;
@@ -413,9 +425,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    detect_ucs2_limitation();
-    g_color_emoji = !!getenv("WT_SESSION");
-
     if (!parse_options(argc, argv, c_options))
     {
         static const char usage[] =
@@ -471,6 +480,10 @@ int main(int argc, char** argv)
     }
 
     setlocale(LC_ALL, ".utf8");
+
+    g_color_emoji = !!getenv("WT_SESSION");
+    s_only_ucs2 = detect_ucs2_limitation(s_only_ucs2 || !g_color_emoji);
+    reset_wcwidths();
 
     combining_mark_width_scope cmwidth(s_combining_marks_zero ? 0 : 1);
 
@@ -542,6 +555,9 @@ int main(int argc, char** argv)
 
     for (const block_range* range = ranges; range->first; ++range)
     {
+        if (manual_ranges.empty() && range->first >= 0x10000)
+            break;
+
         if (s_skip_ideographs && range->desc && strstr(range->desc, "Ideograph"))
             continue;
 
@@ -617,23 +633,27 @@ int main(int argc, char** argv)
             {
                 for (int32 n = 0; sequence->ucs == c; ++n)
                 {
-                    const int32 v = VerifyWidth(sequence);
-                    if (v < 0)
+                    if (IsSequenceSupported(sequence->seq))
                     {
-                        fprintf(stderr, "INTERNAL FAILURE:  unable to verify sequence #%d for %04X.\n", n, uint32(c));
-                        return 1;
+                        const int32 v = VerifyWidth(sequence);
+                        if (v < 0)
+                        {
+                            fprintf(stderr, "INTERNAL FAILURE:  unable to verify sequence #%d for %04X.\n", n, uint32(c));
+                            return 1;
+                        }
+
+                        if (!v)
+                        {
+                            ++failed;
+                            if (!first_failure)
+                                first_failure = c;
+                            last_failure = c;
+                            verified = false;
+                        }
+
+                        ++tested;
                     }
 
-                    if (!v)
-                    {
-                        ++failed;
-                        if (!first_failure)
-                            first_failure = c;
-                        last_failure = c;
-                        verified = false;
-                    }
-
-                    ++tested;
                     ++sequence;
                 }
             }
