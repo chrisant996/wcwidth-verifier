@@ -543,7 +543,7 @@ int main(int argc, char** argv)
 
     if (s_verbose)
     {
-        printf("only-ucs                = %d\n", g_only_ucs2);
+        printf("only-ucs2               = %d\n", g_only_ucs2);
         printf("color-emoji             = %d\n", g_color_emoji);
         printf("full-width              = %d\n", g_full_width_available);
         printf("\n");
