@@ -9,11 +9,12 @@ static char32_t s_suffix = ' ';
 static bool s_verbose = false;
 static bool s_group_headers = true;
 static bool s_show_width = false;
-static bool s_only_ucs2 = false;
+static bool s_force_only_ucs2 = false;
 static bool s_decimal = false;
 
 bool g_full_width_available = true;
 bool g_color_emoji = false;
+bool g_only_ucs2 = false;
 
 #include "unicode-blocks.i"
 
@@ -162,8 +163,6 @@ static int32 VerifyWidth(const emoji_form_sequence* sequence)
         return -1;
 
     const SHORT width = csbiAfter1.dwCursorPosition.X - csbiBefore.dwCursorPosition.X;
-    if (width < 0 || width > 2)
-        return -1;
 
     bool suffix_effect = false;
     if (s_suffix)
@@ -263,8 +262,11 @@ static bool IsSkip(char32_t c)
 
 static bool IsSequenceSupported(const char* seq)
 {
-    if (s_only_ucs2)
+    if (g_only_ucs2)
     {
+        // Conhost on Win 8.1 and Win 10 behave oddly for many emoji
+        // sequences.  It isn't a goal at this time to try to accurately
+        // predict the odd behaviors.
         if (strlen(seq) > 6)
             return false;
         if (strstr(seq, "\xef\xb8\x8f"))
@@ -403,7 +405,7 @@ static const option_definition c_options[] =
     { "decimal",                option_type::boolean,     &s_decimal },
     { "color-emoji",            option_type::boolean,     &g_color_emoji },
     { "full-width",             option_type::boolean,     &g_full_width_available },
-    { "only-ucs2",              option_type::boolean,     &s_only_ucs2 },
+    { "only-ucs2",              option_type::boolean,     &s_force_only_ucs2 },
     { "group-headers",          option_type::boolean,     &s_group_headers },
     { "skip-combining",         option_type::boolean,     &s_skip_combining },
     { "skip-emoji",             option_type::boolean,     &s_skip_emoji },
@@ -482,7 +484,7 @@ int main(int argc, char** argv)
     setlocale(LC_ALL, ".utf8");
 
     g_color_emoji = !!getenv("WT_SESSION");
-    s_only_ucs2 = detect_ucs2_limitation(s_only_ucs2 || !g_color_emoji);
+    g_only_ucs2 = detect_ucs2_limitation(s_force_only_ucs2 || !g_color_emoji);
     reset_wcwidths();
 
     std::vector<block_range> manual_ranges;
@@ -541,7 +543,7 @@ int main(int argc, char** argv)
 
     if (s_verbose)
     {
-        printf("only-ucs                = %d\n", s_only_ucs2);
+        printf("only-ucs                = %d\n", g_only_ucs2);
         printf("color-emoji             = %d\n", g_color_emoji);
         printf("full-width              = %d\n", g_full_width_available);
         printf("\n");
