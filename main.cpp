@@ -491,16 +491,10 @@ int main(int argc, char** argv)
     {
         for (int32 i = 0; i < argc; ++i)
         {
-            if (argv[0][0] < '0' || argv[0][0] > '9')
-            {
-                fprintf(stderr, "Unrecognized codepoint '%s'.\n", argv[0]);
-                return 1;
-            }
-
             interval interval;
-            if (!ParseCodepoint(argv[0], interval))
+            if (!ParseCodepoint(argv[i], interval))
             {
-                fprintf(stderr, "Unable to parse '%s' as a codepoint or range of codepoints.\n", argv[0]);
+                fprintf(stderr, "Unable to parse '%s' as a codepoint or range of codepoints.\n", argv[i]);
                 return 1;
             }
             manual_ranges.push_back({interval.first, interval.last});
