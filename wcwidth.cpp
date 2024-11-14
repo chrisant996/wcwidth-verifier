@@ -101,67 +101,6 @@ static int32 bisearch(char32_t ucs, const struct interval *table, int32 max) {
 }
 
 #include "emoji-test.i"
-#include "assigned-codepoints.i"
-
-const emoji_form_sequence* get_emoji_form_sequence(char32_t ucs) {
-  int32 min = 0;
-  int32 max = _countof(emoji_forms);
-  int32 mid;
-
-  while (max > min) {
-    mid = (min + max) / 2;
-    if (ucs > emoji_forms[mid].ucs)
-      min = mid + 1;
-    else
-      max = mid;
-  }
-  if (max == min && min < _countof(emoji_forms)) {
-    assert(min < 1 || emoji_forms[min - 1].ucs < ucs);
-    const emoji_form_sequence* x = emoji_forms + min;
-    if (x->ucs == ucs)
-      return x;
-  }
-
-  return nullptr;
-}
-
-const char* is_assigned(char32_t ucs) {
-  const struct codepoint* table = c_assigned;
-  int32 min = 0;
-  int32 max = _countof(c_assigned) - 1;
-  int32 mid;
-
-  while (max >= min) {
-    mid = (min + max) / 2;
-    if (ucs > table[mid].ucs)
-      min = mid + 1;
-    else if (ucs < table[mid].ucs)
-      max = mid - 1;
-    else
-      return table[mid].desc;
-  }
-
-  const struct codepoint_range* atable = c_assigned_areas;
-  min = 0;
-  max = _countof(c_assigned_areas) - 1;
-
-  while (max >= min) {
-    mid = (min + max) / 2;
-    if (ucs > atable[mid].last)
-      min = mid + 1;
-    else if (ucs < atable[mid].first)
-      max = mid - 1;
-    else
-      return atable[mid].desc;
-  }
-
-  return 0;
-}
-
-bool is_ideograph(char32_t ucs) {
-  const char* name = is_assigned(ucs);
-  return name && strstr(name, "IDEOGRAPH");
-}
 
 bool is_kana(char32_t ucs) {
   static const struct interval kana[] = {

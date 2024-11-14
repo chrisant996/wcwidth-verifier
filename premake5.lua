@@ -186,6 +186,7 @@ local function output_emoji_forms(out, tag, indexed, possible_unqualified_half_w
     -- Declaration.
     out:write("\nstatic const emoji_form_sequence " .. tag .. "[] = {\n\n")
 
+    local count = 0
     for ucs, t in spairs(forms) do
         for _, form in ipairs(t) do
             local seq = ""
@@ -197,10 +198,33 @@ local function output_emoji_forms(out, tag, indexed, possible_unqualified_half_w
             else
                 out:write(string.format("{ 0x%X, \"%s\" },\n", ucs, seq))
             end
+            count = count + 1
         end
     end
 
     out:write("\n};\n")
+
+    return count
+end
+
+--------------------------------------------------------------------------------
+local function do_emoji_forms(header, indexed, possible_unqualified_half_width, filtered)
+    local out = "emoji-forms.i"
+
+    print("\n"..out)
+
+    out = io.open(out, "w")
+
+    for _,line in ipairs(header) do
+        out:write(line)
+        out:write("\n")
+    end
+
+    local forms_count = output_emoji_forms(out, "emoji_forms", indexed, possible_unqualified_half_width, filtered)
+
+    out:close()
+
+    print("   " .. forms_count .. " emoji sequence forms")
 end
 
 --------------------------------------------------------------------------------
@@ -242,12 +266,12 @@ local function do_emojis()
     -- Output ranges of emoji characters which may be half-width if unqualified.
     local half_width = output_character_ranges(out, "possible_unqualified_half_width", possible_unqualified_half_width, nil)
 
-    output_emoji_forms(out, "emoji_forms", indexed, possible_unqualified_half_width, filtered)
-
     out:close()
 
     print("   " .. #emojis .. " emojis; " .. count_ranges .. " ranges")
     print("   " .. #half_width .. " possible unqualified half width emojis")
+
+    do_emoji_forms(header, indexed, possible_unqualified_half_width, filtered)
 end
 
 --------------------------------------------------------------------------------
