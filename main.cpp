@@ -9,16 +9,21 @@ static char32_t s_suffix = ' ';
 static bool s_verbose = false;
 static bool s_group_headers = true;
 static bool s_show_width = false;
-static bool s_force_only_ucs2 = false;
 static bool s_decimal = false;
-
-bool g_full_width_available = true;
-bool g_color_emoji = false;
-bool g_only_ucs2 = false;
+static wcwidth_modes s_init_modes;
 
 #include "unicode-blocks.i"
 #include "assigned-codepoints.i"
 #include "emoji-forms.i"
+
+static const char* mode_name(int32 init_mode)
+{
+    if (init_mode > 0)
+        return "true";
+    if (init_mode < 0)
+        return "false";
+    return "<unknown>";
+}
 
 const char* is_assigned(char32_t ucs) {
   const struct codepoint* table = c_assigned;
@@ -324,16 +329,13 @@ static bool IsSkip(char32_t c)
 
 static bool IsSequenceSupported(const char* seq)
 {
-    if (g_only_ucs2)
-    {
-        // Conhost on Win 8.1 and Win 10 behave oddly for many emoji
-        // sequences.  It isn't a goal at this time to try to accurately
-        // predict the odd behaviors.
-        if (strlen(seq) > 6)
-            return false;
-        if (strstr(seq, "\xef\xb8\x8f"))
-            return false;
-    }
+    // Conhost on Win 8.1 and Win 10 behave oddly for many emoji
+    // sequences.  It isn't a goal at this time to try to accurately
+    // predict the odd behaviors.
+    if (strlen(seq) > 6)
+        return false;
+    if (strstr(seq, "\xef\xb8\x8f"))
+        return false;
     return true;
 }
 
@@ -381,7 +383,7 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
     return true;
 }
 
-enum class option_type { boolean, codepoint };
+enum class option_type { boolean, codepoint, init_mode };
 
 struct option_definition
 {
@@ -439,6 +441,9 @@ static bool parse_options(int32& argc, char**& argv, const option_definition* op
                         *static_cast<char32_t*>(o->value) = interval.first;
                     }
                     break;
+                case option_type::init_mode:
+                    *static_cast<int32*>(o->value) = no ? -1 : 1;
+                    break;
                 default:
                     fprintf(stderr, "Unknown option type %d.\n", o->type);
                     exit(1);
@@ -465,9 +470,9 @@ static const option_definition c_options[] =
     { "prefix",                 option_type::codepoint,   &s_prefix },
     { "suffix",                 option_type::codepoint,   &s_suffix },
     { "decimal",                option_type::boolean,     &s_decimal },
-    { "color-emoji",            option_type::boolean,     &g_color_emoji },
-    { "full-width",             option_type::boolean,     &g_full_width_available },
-    { "only-ucs2",              option_type::boolean,     &s_force_only_ucs2 },
+    { "color-emoji",            option_type::init_mode,   &s_init_modes.color_emoji },
+    { "full-width",             option_type::init_mode,   &s_init_modes.fullwidth_available },
+    { "only-ucs2",              option_type::init_mode,   &s_init_modes.only_ucs2 },
     { "group-headers",          option_type::boolean,     &s_group_headers },
     { "skip-combining",         option_type::boolean,     &s_skip_combining },
     { "skip-emoji",             option_type::boolean,     &s_skip_emoji },
@@ -511,9 +516,9 @@ int main(int argc, char** argv)
         "\n"
         "On/off options:\n"
         "  --verbose             Verbose output; don't erase failed codepoints.\n"
-        "  --color-emoji         Assume the terminal supports color emoji (default).\n"
+        "  --color-emoji         Assume the terminal supports color emoji.\n"
         "  --decimal             Use decimal for input numbers (default is hexadecimal).\n"
-        "  --full-width          Assume Full Width characters are full width (default).\n"
+        "  --full-width          Assume Full Width characters are full width.\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
         "  --group-headers       Shows names of groups of codepoints (default).\n"
         "  --show-width          Shows expected and actual width for each character.\n"
@@ -526,7 +531,9 @@ int main(int argc, char** argv)
         "                        back specific ranges).\n"
         "\n"
         "  NOTE:  On/off options can be enabled by --name or disabled by --no-name.\n"
-        "  NOTE:  Windows 8.1 and lower seem to behave like --no-full-width.\n"
+        "  NOTE:  By default the terminal support is detected automatically, but the\n"
+        "         --color-emoji, --full-width, and --only-ucs2 flags can be used to\n"
+        "         override the auto-detection.\n"
         "\n"
         "Examples:\n"
         "\n"
@@ -545,9 +552,8 @@ int main(int argc, char** argv)
 
     setlocale(LC_ALL, ".utf8");
 
-    g_color_emoji = !!getenv("WT_SESSION");
-    g_only_ucs2 = detect_ucs2_limitation(s_force_only_ucs2 || !g_color_emoji);
-    reset_wcwidths();
+    initialize_wcwidth(&s_init_modes);
+    const bool c_only_ucs2 = get_only_ucs2();
 
     std::vector<block_range> manual_ranges;
 
@@ -605,12 +611,13 @@ int main(int argc, char** argv)
 
     if (s_verbose)
     {
-        printf("only-ucs2               = %d\n", g_only_ucs2);
-        printf("color-emoji             = %d\n", g_color_emoji);
-        printf("full-width              = %d\n", g_full_width_available);
+        printf("color-emoji             = %s\n", get_color_emoji() ? "true" : "false");
+        printf("full-width              = %s\n", get_fullwidth_available() ? "true" : "false");
+        printf("only-ucs2               = %s\n", c_only_ucs2 ? "true" : "false");
         printf("\n");
     }
 
+    const bool s_sequences_supported = get_color_emoji();
     const block_range* const ranges = manual_ranges.empty() ? c_blocks : &manual_ranges.front();
     const DWORD began = GetTickCount();
 
@@ -697,7 +704,7 @@ int main(int argc, char** argv)
             {
                 for (int32 n = 0; sequence->ucs == c; ++n)
                 {
-                    if (IsSequenceSupported(sequence->seq))
+                    if (!c_only_ucs2 || IsSequenceSupported(sequence->seq))
                     {
                         const int32 v = VerifyWidth(sequence);
                         if (v < 0)

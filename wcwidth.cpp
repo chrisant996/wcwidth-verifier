@@ -69,6 +69,8 @@
 #include "wcwidth.h"
 
 static int32 s_combining_mark_width = 0;
+static bool s_color_emoji = false;
+static bool s_fullwidth_available = false;
 static bool s_only_ucs2 = false;
 static bool s_win10 = false;
 static bool s_win11 = false;
@@ -230,7 +232,7 @@ static int32 mk_wcwidth(char32_t ucs)
     return -1;
 
   /* special processing when color emoji support is enabled */
-  if (g_color_emoji) {
+  if (s_color_emoji) {
     /* characters with unqualified forms are width 1 without FE0F/etc */
     if (bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1))
       return 1;
@@ -244,7 +246,7 @@ static int32 mk_wcwidth(char32_t ucs)
     return s_combining_mark_width;
 
   /* if we arrive here, ucs is not a combining or C0/C1 control character */
-  if (ucs < 0x1100 || !g_full_width_available)
+  if (ucs < 0x1100 || !s_fullwidth_available)
     return 1;
   if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
     return 2;                                         // ...wcwidth expected 1
@@ -278,7 +280,7 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
     return -1;
 
   /* special processing when color emoji support is enabled */
-  if (g_color_emoji) {
+  if (s_color_emoji) {
     /* characters with unqualified forms are width 1 without FE0F/etc */
     if (bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1))
       return 1;
@@ -296,7 +298,7 @@ static int32 mk_wcwidth_ucs2(char32_t ucs)
     return s_combining_mark_width;
 
   /* if we arrive here, ucs is not a combining or C0/C1 control character */
-  if (ucs < 0x1100 || !g_full_width_available)
+  if (ucs < 0x1100 || !s_fullwidth_available)
     return 1;
   if (ucs <= 0x115f)                      /* Hangul Jamo init. consonants */
     return 2;                                         // ...wcwidth expected 1
@@ -449,10 +451,10 @@ combining_mark_width_scope::~combining_mark_width_scope()
     s_combining_mark_width = m_old;
 }
 
-bool detect_ucs2_limitation(bool force)
+void initialize_wcwidth(const wcwidth_modes* modes)
 {
-    static bool s_inited_only_ucs2 = false;
-    if (!s_inited_only_ucs2)
+    static bool s_inited = false;
+    if (!s_inited)
     {
 #pragma warning(push)
 #pragma warning(disable:4996)
@@ -461,17 +463,45 @@ bool detect_ucs2_limitation(bool force)
         {
             s_win10 = (ver.dwMajorVersion >= 10);
             s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
-            s_only_ucs2 = !s_win10;
         }
-        s_inited_only_ucs2 = true;
-    }
-    if (force)
-    {
-        s_only_ucs2 = true;
-        s_inited_only_ucs2 = true;
-    }
+        s_color_emoji = !!_wgetenv(L"WT_SESSION");
+        s_only_ucs2 = !s_win10;
+        s_fullwidth_available = s_win10;
+        s_inited = true;
 #pragma warning(pop)
+    }
+
+    if (modes)
+    {
+        if (modes->color_emoji)
+            s_color_emoji = modes->color_emoji > 0;
+        if (modes->only_ucs2)
+            s_only_ucs2 = modes->only_ucs2 > 0;
+        if (modes->fullwidth_available)
+            s_fullwidth_available = modes->fullwidth_available > 0;
+    }
+
+    static UINT s_cp = 0; // Static so that it's visible in heap dumps.
+    s_cp = GetConsoleOutputCP();
+    if (is_CJK_codepage(s_cp))
+        wcwidth = s_only_ucs2 ? mk_wcwidth_cjk_ucs2 : mk_wcwidth_cjk;
+    else
+        wcwidth = s_only_ucs2 ? mk_wcwidth_ucs2 : mk_wcwidth;
+}
+
+bool get_color_emoji()
+{
+    return s_color_emoji;
+}
+
+bool get_only_ucs2()
+{
     return s_only_ucs2;
+}
+
+bool get_fullwidth_available()
+{
+    return s_fullwidth_available;
 }
 
 /*
@@ -480,7 +510,7 @@ bool detect_ucs2_limitation(bool force)
  */
 bool is_variant_selector(char32_t ucs)
 {
-    assert(g_color_emoji);
+    assert(s_color_emoji);
     return (ucs == 0xfe0f ||                            // color variant
             ucs >= 0x1f3fb && ucs <= 0x1f3ff);          // skin tone
 }
@@ -493,7 +523,7 @@ bool is_variant_selector(char32_t ucs)
  */
 bool is_possible_unqualified_half_width(char32_t ucs)
 {
-    assert(g_color_emoji);
+    assert(s_color_emoji);
     return !!bisearch(ucs, possible_unqualified_half_width, _countof(possible_unqualified_half_width) - 1);
 }
 
@@ -507,7 +537,7 @@ bool is_combining(char32_t ucs)
  */
 bool is_emoji(char32_t ucs)
 {
-    assert(g_color_emoji);
+    assert(s_color_emoji);
     return !!bisearch(ucs, emojis, _countof(emojis) - 1);
 }
 
@@ -516,29 +546,9 @@ static int32 resolve_ambiguous_wcwidth(char32_t ucs)
     return 2;
 }
 
-int32 is_CJK_codepage(UINT cp)
+bool is_CJK_codepage(UINT cp)
 {
     return (cp == 932 || cp == 936 || cp == 949 || cp == 950);
-}
-
-void reset_wcwidths()
-{
-    int32 use_cjk = true;
-
-    detect_ucs2_limitation();
-
-    static UINT s_cp = 0; // Static so that it's visible in heap dumps.
-    s_cp = GetConsoleOutputCP();
-    use_cjk = is_CJK_codepage(s_cp);
-
-    if (use_cjk)
-    {
-        wcwidth = s_only_ucs2 ? mk_wcwidth_cjk_ucs2 : mk_wcwidth_cjk;
-    }
-    else
-    {
-        wcwidth = s_only_ucs2 ? mk_wcwidth_ucs2 : mk_wcwidth;
-    }
 }
 
 // vim: ts=2 expandtab sw=2
