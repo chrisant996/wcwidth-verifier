@@ -12,77 +12,131 @@ static bool s_show_width = false;
 static bool s_decimal = false;
 static wcwidth_modes s_init_modes;
 
+struct emoji_form_sequence {
+  char32_t ucs;
+  const char* seq;
+  const char* desc;
+};
+
 #include "unicode-blocks.i"
 #include "assigned-codepoints.i"
 #include "emoji-forms.i"
 
-static const char* mode_name(int32 init_mode)
+static const char* is_assigned(char32_t ucs)
 {
-    if (init_mode > 0)
-        return "true";
-    if (init_mode < 0)
-        return "false";
-    return "<unknown>";
+    const struct codepoint* table = c_assigned;
+    int32 min = 0;
+    int32 max = _countof(c_assigned) - 1;
+    int32 mid;
+
+    while (max >= min)
+    {
+        mid = (min + max) / 2;
+        if (ucs > table[mid].ucs)
+            min = mid + 1;
+        else if (ucs < table[mid].ucs)
+            max = mid - 1;
+        else
+            return table[mid].desc;
+    }
+
+    const struct codepoint_range* atable = c_assigned_areas;
+    min = 0;
+    max = _countof(c_assigned_areas) - 1;
+
+    while (max >= min)
+    {
+        mid = (min + max) / 2;
+        if (ucs > atable[mid].last)
+            min = mid + 1;
+        else if (ucs < atable[mid].first)
+            max = mid - 1;
+        else
+            return atable[mid].desc;
+    }
+
+    return 0;
 }
 
-const char* is_assigned(char32_t ucs) {
-  const struct codepoint* table = c_assigned;
-  int32 min = 0;
-  int32 max = _countof(c_assigned) - 1;
-  int32 mid;
-
-  while (max >= min) {
-    mid = (min + max) / 2;
-    if (ucs > table[mid].ucs)
-      min = mid + 1;
-    else if (ucs < table[mid].ucs)
-      max = mid - 1;
-    else
-      return table[mid].desc;
-  }
-
-  const struct codepoint_range* atable = c_assigned_areas;
-  min = 0;
-  max = _countof(c_assigned_areas) - 1;
-
-  while (max >= min) {
-    mid = (min + max) / 2;
-    if (ucs > atable[mid].last)
-      min = mid + 1;
-    else if (ucs < atable[mid].first)
-      max = mid - 1;
-    else
-      return atable[mid].desc;
-  }
-
-  return 0;
+static bool is_ideograph(char32_t ucs)
+{
+    const char* name = is_assigned(ucs);
+    return name && strstr(name, "IDEOGRAPH");
 }
 
-bool is_ideograph(char32_t ucs) {
-  const char* name = is_assigned(ucs);
-  return name && strstr(name, "IDEOGRAPH");
+struct interval
+{
+    char32_t first;
+    char32_t last;
+};
+
+static int32 bisearch(char32_t ucs, const struct interval *table, int32 max)
+{
+    int32 min = 0;
+    int32 mid;
+
+    if (ucs < table[0].first || ucs > table[max].last)
+        return 0;
+    while (max >= min)
+    {
+        mid = (min + max) / 2;
+        if (ucs > table[mid].last)
+            min = mid + 1;
+        else if (ucs < table[mid].first)
+            max = mid - 1;
+        else
+            return 1;
+    }
+
+    return 0;
 }
 
-const emoji_form_sequence* get_emoji_form_sequence(char32_t ucs) {
-  int32 min = 0;
-  int32 max = _countof(emoji_forms);
-  int32 mid;
+static bool is_kana(char32_t ucs)
+{
+    static const struct interval kana[] = {
+    { 0x1100, 0x115f },     // Hangul Jamo (various characters)
+    { 0x302e, 0x302f },     // CJK Symbols and Punctuation (Hangul single/double dot tone marks)
+    { 0xa960, 0xa97c },     // Hangul Jamo Extended-A (various characters)
+    { 0x18800, 0x18aff },   // Tangut Components
+    { 0x18b00, 0x18cff },   // Khitan Small Script
+    { 0x1aff0, 0x1aff3 },   // Kana Extended-B (various tones)
+    { 0x1aff5, 0x1affb },   // Kana Extended-B (various tones)
+    { 0x1affd, 0x1affe },   // Kana Extended-B (various tones)
+    { 0x1b000, 0x1b0ff },   // Kana Supplement
+    { 0x1b100, 0x1b122 },   // Kana Extended-A
+    { 0x1b132, 0x1b132 },   // Small Kana Extension (various letters)
+    { 0x1b150, 0x1b152 },   // Small Kana Extension (various letters)
+    { 0x1b155, 0x1b155 },   // Small Kana Extension (various letters)
+    { 0x1b164, 0x1b167 },   // Small Kana Extension (various letters)
+    { 0x1b170, 0x1b2ff },   // Nushu
+    };
+    return !!bisearch(ucs, kana, _countof(kana) - 1);
+}
 
-  while (max > min) {
-    mid = (min + max) / 2;
-    if (ucs > emoji_forms[mid].ucs)
-      min = mid + 1;
-    else
-      max = mid;
-  }
-  if (max == min && min < _countof(emoji_forms)) {
-    assert(min < 1 || emoji_forms[min - 1].ucs < ucs);
-    const emoji_form_sequence* x = emoji_forms + min;
-    if (x->ucs == ucs)
-      return x;
-  }
+static const emoji_form_sequence* get_emoji_form_sequence(char32_t ucs)
+{
+    int32 min = 0;
+    int32 max = _countof(emoji_forms);
+    int32 mid;
 
-  return nullptr;
+    while (max > min)
+    {
+        mid = (min + max) / 2;
+        if (ucs > emoji_forms[mid].ucs)
+            min = mid + 1;
+        else
+            max = mid;
+    }
+
+    if (max == min && min < _countof(emoji_forms))
+    {
+        assert(min < 1 || emoji_forms[min - 1].ucs < ucs);
+        const emoji_form_sequence* x = emoji_forms + min;
+        if (x->ucs == ucs)
+            return x;
+    }
+
+    return nullptr;
 }
 
 class utf16fromutf32
@@ -339,12 +393,6 @@ static bool IsSequenceSupported(const char* seq)
     return true;
 }
 
-struct interval
-{
-    char32_t first;
-    char32_t last;
-};
-
 static bool ParseCodepoint(const char* arg, interval& range, bool end_range=false)
 {
     char* end;
@@ -374,6 +422,8 @@ static bool ParseCodepoint(const char* arg, interval& range, bool end_range=fals
     else
     {
         range.first = range.last = x;
+        if (end[0] == '-')
+            return ParseCodepoint(end + 1, range, true);
         if (end[0] == '.' && end[1] == '.')
             return ParseCodepoint(end + 2, range, true);
         if (*end && *end != ' ')
@@ -471,7 +521,6 @@ static const option_definition c_options[] =
     { "suffix",                 option_type::codepoint,   &s_suffix },
     { "decimal",                option_type::boolean,     &s_decimal },
     { "color-emoji",            option_type::init_mode,   &s_init_modes.color_emoji },
-    { "full-width",             option_type::init_mode,   &s_init_modes.fullwidth_available },
     { "only-ucs2",              option_type::init_mode,   &s_init_modes.only_ucs2 },
     { "group-headers",          option_type::boolean,     &s_group_headers },
     { "skip-combining",         option_type::boolean,     &s_skip_combining },
@@ -501,8 +550,8 @@ int main(int argc, char** argv)
         "Usage:  wcwv [flags] [codepoint [...]]\n"
         "\n"
         "  Each \"codepoint\" can be a single value, or a range of values denoted by two\n"
-        "  values separated by '..' (such as '0x300..0x31F').  By default, values are\n"
-        "  assumed to be in hexadecimal unless --decimal is used.  The '0x' or 'U+'\n"
+        "  values separated by '..' or '-' (such as '0x300..0x31F').  By default, values\n"
+        "  are assumed to be in hexadecimal unless --decimal is used.  The '0x' or 'U+'\n"
         "  prefixes specify hexadecimal even when --decimal is used.\n"
         "\n"
         "Options:\n"
@@ -518,7 +567,6 @@ int main(int argc, char** argv)
         "  --verbose             Verbose output; don't erase failed codepoints.\n"
         "  --color-emoji         Assume the terminal supports color emoji.\n"
         "  --decimal             Use decimal for input numbers (default is hexadecimal).\n"
-        "  --full-width          Assume Full Width characters are full width.\n"
         "  --only-ucs2           Assume only UCS2 support.\n"
         "  --group-headers       Shows names of groups of codepoints (default).\n"
         "  --show-width          Shows expected and actual width for each character.\n"
@@ -532,19 +580,19 @@ int main(int argc, char** argv)
         "\n"
         "  NOTE:  On/off options can be enabled by --name or disabled by --no-name.\n"
         "  NOTE:  By default the terminal support is detected automatically, but the\n"
-        "         --color-emoji, --full-width, and --only-ucs2 flags can be used to\n"
-        "         override the auto-detection.\n"
+        "         --color-emoji and --only-ucs2 flags can be used to override the\n"
+        "         auto-detection.\n"
         "\n"
         "Examples:\n"
         "\n"
-        "  wcwv                          Run the full tests.\n"
-        "  wcwv --no-clear-failed        Run the full tests, and leave failed codepoints\n"
-        "                                visible after failing.\n"
-        "  wcwv 300                      Run the test on codepoint U+300.\n"
-        "  wcwv 300 301                  Run the test on codepoints U+300 and U+301.\n"
-        "  wcwv 300..3FF                 Run the test on codepoints U+300 through U+3FF.\n"
-        "  wcwv 20..2F 40..5F            Run the test on codepoints U+20 through U+2F\n"
-        "                                and U+40 through U+5F.\n"
+        "  wcwv                  Run the full tests.\n"
+        "  wcwv --verbose        Run the full tests, and leave failed codepoints visible\n"
+        "                        after failing.\n"
+        "  wcwv 300              Run the test on codepoint U+300.\n"
+        "  wcwv 300 301          Run the test on codepoints U+300 and U+301.\n"
+        "  wcwv 300..3FF         Run the test on codepoints U+300 through U+3FF.\n"
+        "  wcwv 20..2F 40..5F    Run the test on codepoints U+20 through U+2F\n"
+        "                        and U+40 through U+5F.\n"
         ;
         printf("%s", usage);
         return 0;
@@ -612,7 +660,6 @@ int main(int argc, char** argv)
     if (s_verbose)
     {
         printf("color-emoji             = %s\n", get_color_emoji() ? "true" : "false");
-        printf("full-width              = %s\n", get_fullwidth_available() ? "true" : "false");
         printf("only-ucs2               = %s\n", c_only_ucs2 ? "true" : "false");
         printf("\n");
     }
