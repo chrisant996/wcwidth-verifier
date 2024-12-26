@@ -433,8 +433,9 @@ void initialize_wcwidth(const wcwidth_modes* modes)
             s_win10 = (ver.dwMajorVersion >= 10);
             s_win11 = (ver.dwMajorVersion > 10 || (ver.dwMajorVersion == 10 && ver.dwBuildNumber >= 22000));
         }
-        s_color_emoji = !!_wgetenv(L"WT_SESSION");
-        s_only_ucs2 = !s_win10;
+        const bool winterm = !!_wgetenv(L"WT_SESSION");
+        s_color_emoji = winterm;
+        s_only_ucs2 = !s_win10 || !winterm;
         s_inited = true;
 #pragma warning(pop)
     }
