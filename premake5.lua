@@ -2,6 +2,12 @@ local to = ".build/"..(_ACTION or "nullaction")
 
 local bit32 = require("numberlua").bit32
 
+if _PREMAKE_VERSION:find("^4") then
+    error("Requires premake 5.0.0-beta8 or newer.")
+elseif (tonumber(_PREMAKE_VERSION:match("^5%.0%.0.beta(.*)") or "0") or 0) < 8 then
+    error("Requires premake 5.0.0-beta8 or newer.")
+end
+
 --------------------------------------------------------------------------------
 workspace("wcwidth-verifier")
     configurations({"debug"})

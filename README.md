@@ -15,7 +15,7 @@ This tool is meant for use by programmers familiar with Unicode, wcwidth, graphe
 
 ### Building the Tool
 
-The tool uses [Premake](http://premake.github.io) to generate Visual Studio solutions.  Note that Premake >= 5.0.0-beta4 is required.
+The tool uses [Premake](http://premake.github.io) to generate Visual Studio solutions.  Note that Premake >= 5.0.0-beta8 is required.
 
 You might be able to generate MinGW makefiles with `premake5 gmake`, but I won't support MinGW for this tool.
 
