@@ -5,12 +5,12 @@ local bit32 = require("numberlua").bit32
 --------------------------------------------------------------------------------
 workspace("wcwidth-verifier")
     configurations({"debug"})
-    platforms({"x32", "x64"})
+    platforms({"x86", "x64"})
     location(to)
 
     characterset("MBCS")
-    flags("NoManifest")
-    flags("fatalwarnings")
+    manifest("off")
+    fatalwarnings("all")
     staticruntime("on")
     symbols("on")
 
